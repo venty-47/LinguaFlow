@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Article } from '@/types';
+import { resolveAPIAssetURL } from '@/lib/api';
 import { Calendar, Clock, Eye, BookOpen } from 'lucide-react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -26,6 +27,7 @@ const difficultyLabels = {
 
 export default function ArticleCard({ article }: ArticleCardProps) {
   const [imageError, setImageError] = useState(false);
+  const coverImageURL = article.cover_image ? resolveAPIAssetURL(article.cover_image) : '';
 
   return (
     <Link
@@ -33,10 +35,10 @@ export default function ArticleCard({ article }: ArticleCardProps) {
       className="block bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden hover:border-blue-500 transition-all duration-300 group"
     >
       {/* Cover Image */}
-      {article.cover_image && !imageError ? (
+      {coverImageURL && !imageError ? (
         <div className="relative h-48 w-full overflow-hidden bg-gray-800">
           <Image
-            src={article.cover_image}
+            src={coverImageURL}
             alt={article.title}
             fill
             className="object-cover group-hover:scale-105 transition-transform duration-300"

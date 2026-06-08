@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { articleAPI } from '@/lib/api';
+import { articleAPI, resolveAPIAssetURL } from '@/lib/api';
 import { Article } from '@/types';
 import { ArrowRight, Loader2, Sparkles } from 'lucide-react';
 
@@ -228,6 +228,7 @@ const difficultyLabels = {
 
 function MagazineArticleCard({ article, index }: { article: Article; index: number }) {
   const href = article.id < 0 ? '/journals' : `/articles/${article.slug}`;
+  const coverImageURL = article.cover_image ? resolveAPIAssetURL(article.cover_image) : '';
 
   return (
     <Link
@@ -237,9 +238,9 @@ function MagazineArticleCard({ article, index }: { article: Article; index: numb
       }`}
     >
       <div className="relative mb-3 aspect-[16/9] w-full overflow-hidden bg-gray-900">
-        {article.cover_image ? (
+        {coverImageURL ? (
           <Image
-            src={article.cover_image}
+            src={coverImageURL}
             alt={article.title}
             fill
             sizes="(max-width: 1024px) 50vw, 20vw"

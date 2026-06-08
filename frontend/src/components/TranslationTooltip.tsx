@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { translationAPI, vocabularyAPI } from '@/lib/api';
-import { Volume2, BookmarkPlus, Loader2 } from 'lucide-react';
+import { Vocabulary } from '@/types';
+import { Bot, BookmarkCheck, BookmarkPlus, Loader2, RotateCcw, Volume2 } from 'lucide-react';
 
 interface TranslationTooltipProps {
   selectedText: string;
@@ -11,7 +12,10 @@ interface TranslationTooltipProps {
   articleId?: number;
   mode?: 'translate' | 'dictionary';
   context?: string;
+  existingVocabulary?: Vocabulary;
+  onAskAI?: (text: string) => void;
   onWordAdded?: (word: string) => void;
+  onVocabularyReviewed?: (vocabulary: Vocabulary) => void;
 }
 
 export default function TranslationTooltip({
@@ -21,7 +25,10 @@ export default function TranslationTooltip({
   articleId,
   mode = 'translate',
   context,
+  existingVocabulary,
+  onAskAI,
   onWordAdded,
+  onVocabularyReviewed,
 }: TranslationTooltipProps) {
   const [translation, setTranslation] = useState<string>('');
   const [phonetic, setPhonetic] = useState('');
@@ -30,7 +37,13 @@ export default function TranslationTooltip({
   const [speechUrl, setSpeechUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [currentVocabulary, setCurrentVocabulary] = useState<Vocabulary | undefined>(existingVocabulary);
   const tooltipRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setCurrentVocabulary(existingVocabulary);
+  }, [existingVocabulary]);
 
   useEffect(() => {
     const fetchResult = async () => {
@@ -114,7 +127,7 @@ export default function TranslationTooltip({
   const handleAddToVocabulary = async () => {
     try {
       setAdding(true);
-      await vocabularyAPI.addWord({
+      const response = await vocabularyAPI.addWord({
         word: selectedText,
         translation: translation,
         article_id: articleId,
@@ -122,7 +135,10 @@ export default function TranslationTooltip({
         phonetic,
         definition,
       });
-      onWordAdded?.(selectedText.toLowerCase());
+      const vocabulary = response.data.data as Vocabulary;
+      setCurrentVocabulary(vocabulary);
+      onWordAdded?.(vocabulary.word.toLowerCase());
+      onVocabularyReviewed?.(vocabulary);
       alert('已添加到生词本');
     } catch (error: any) {
       if (error.response?.status === 401) {
@@ -132,6 +148,26 @@ export default function TranslationTooltip({
       }
     } finally {
       setAdding(false);
+    }
+  };
+
+  const handleReviewVocabulary = async (rating: 'forgot' | 'hard' | 'good') => {
+    if (!currentVocabulary) return;
+
+    try {
+      setReviewing(true);
+      const response = await vocabularyAPI.reviewWord(currentVocabulary.id, rating);
+      const reviewed = response.data.data as Vocabulary;
+      setCurrentVocabulary(reviewed);
+      onVocabularyReviewed?.(reviewed);
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        alert('请先登录');
+      } else {
+        alert('复习记录失败');
+      }
+    } finally {
+      setReviewing(false);
     }
   };
 
@@ -151,6 +187,20 @@ export default function TranslationTooltip({
           </div>
           {phonetic && (
             <div className="mb-2 text-xs text-gray-500">{phonetic}</div>
+          )}
+          {currentVocabulary && (
+            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 font-semibold text-emerald-500 dark:text-emerald-300">
+                <BookmarkCheck className="h-3 w-3" />
+                已在生词本
+              </span>
+              <span className="text-gray-500">
+                复习 {currentVocabulary.review_count} 次
+                {currentVocabulary.forgotten_count > 0
+                  ? ` · 忘记 ${currentVocabulary.forgotten_count} 次`
+                  : ''}
+              </span>
+            </div>
           )}
           {loading ? (
             <div className="flex items-center space-x-2 text-gray-500">
@@ -185,19 +235,59 @@ export default function TranslationTooltip({
           <Volume2 className="w-3.5 h-3.5" />
           <span>发音</span>
         </button>
-        <button
-          onClick={handleAddToVocabulary}
-          disabled={adding || loading}
-          className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors disabled:opacity-50"
-          title="添加到生词本"
-        >
-          {adding ? (
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          ) : (
-            <BookmarkPlus className="w-3.5 h-3.5" />
-          )}
-          <span>生词本</span>
-        </button>
+        {onAskAI && (
+          <button
+            onClick={() => onAskAI(selectedText)}
+            className="flex items-center space-x-1 rounded bg-sky-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-sky-500"
+            title="问 AI"
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>问 AI</span>
+          </button>
+        )}
+        {currentVocabulary ? (
+          <>
+            <button
+              onClick={() => handleReviewVocabulary('forgot')}
+              disabled={reviewing || loading}
+              className="flex items-center space-x-1 rounded bg-gray-100 px-3 py-1.5 text-sm transition-colors hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-800 dark:hover:bg-gray-700"
+              title="忘记"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>忘记</span>
+            </button>
+            <button
+              onClick={() => handleReviewVocabulary('hard')}
+              disabled={reviewing || loading}
+              className="rounded bg-yellow-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-yellow-500 disabled:opacity-50"
+              title="模糊"
+            >
+              模糊
+            </button>
+            <button
+              onClick={() => handleReviewVocabulary('good')}
+              disabled={reviewing || loading}
+              className="rounded bg-green-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-green-500 disabled:opacity-50"
+              title="记得"
+            >
+              记得
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={handleAddToVocabulary}
+            disabled={adding || loading}
+            className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors disabled:opacity-50"
+            title="添加到生词本"
+          >
+            {adding ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <BookmarkPlus className="w-3.5 h-3.5" />
+            )}
+            <span>生词本</span>
+          </button>
+        )}
       </div>
     </div>
   );

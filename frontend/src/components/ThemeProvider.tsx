@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 type Theme = 'light' | 'dark' | 'system';
 type ResolvedTheme = 'light' | 'dark';
@@ -52,11 +52,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     applyTheme(theme, systemTheme);
   }, [systemTheme, theme]);
 
-  const setTheme = (nextTheme: Theme) => {
+  const setTheme = useCallback((nextTheme: Theme) => {
     setThemeState(nextTheme);
     window.localStorage.setItem('linguaflow-theme', nextTheme);
     applyTheme(nextTheme, systemTheme);
-  };
+  }, [systemTheme]);
 
   const value = useMemo<ThemeContextValue>(
     () => ({
@@ -64,7 +64,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       resolvedTheme: theme === 'system' ? systemTheme : theme,
       setTheme,
     }),
-    [systemTheme, theme]
+    [setTheme, systemTheme, theme]
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

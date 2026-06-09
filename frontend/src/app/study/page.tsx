@@ -11,23 +11,37 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  FileVideo,
+  FilePenLine,
   Flame,
+  Languages,
   Loader2,
+  Network,
   Pencil,
   RotateCcw,
   Save,
   Sparkles,
   Target,
+  TrendingDown,
+  TrendingUp,
+  TriangleAlert,
   X,
 } from 'lucide-react';
 import { articleAPI, historyAPI, studyAPI, vocabularyAPI } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { Article, ReadHistory, StudyToday, Vocabulary } from '@/types';
+import { Article, ReadHistory, StudyDiagnostics, StudyToday, Vocabulary } from '@/types';
 
 const difficultyLabels = {
   easy: '简单',
   medium: '中等',
   hard: '困难',
+};
+
+const practiceIcons = {
+  rewrite: FilePenLine,
+  imitation: Sparkles,
+  cn_en: Languages,
+  ai_correction: CheckCircle2,
 };
 
 function isDue(word: Vocabulary) {
@@ -44,6 +58,7 @@ export default function StudyPage() {
   const router = useRouter();
   const { isAuthenticated, token } = useAuthStore();
   const [study, setStudy] = useState<StudyToday | null>(null);
+  const [diagnostics, setDiagnostics] = useState<StudyDiagnostics | null>(null);
   const [history, setHistory] = useState<ReadHistory[]>([]);
   const [vocabulary, setVocabulary] = useState<Vocabulary[]>([]);
   const [recommended, setRecommended] = useState<Article[]>([]);
@@ -74,9 +89,10 @@ export default function StudyPage() {
       try {
         setLoading(true);
         setError('');
-        const [studyResponse, historyResponse, vocabularyResponse, articlesResponse] =
+        const [studyResponse, diagnosticsResponse, historyResponse, vocabularyResponse, articlesResponse] =
           await Promise.all([
             studyAPI.getToday(),
+            studyAPI.getDiagnostics(),
             historyAPI.getReadHistory(),
             vocabularyAPI.getVocabulary({ due: true }),
             articleAPI.getArticles({ page: 1, page_size: 6 }),
@@ -84,6 +100,7 @@ export default function StudyPage() {
 
         const nextStudy = studyResponse.data.data as StudyToday;
         setStudy(nextStudy);
+        setDiagnostics(diagnosticsResponse.data.data as StudyDiagnostics);
         setGoalForm({
           daily_read_minutes: nextStudy.goal.daily_read_minutes,
           daily_review_words: nextStudy.goal.daily_review_words,
@@ -236,6 +253,20 @@ export default function StudyPage() {
             >
               <RotateCcw className="h-4 w-4" />
               开始复习
+            </Link>
+            <Link
+              href="/knowledge-graph"
+              className="inline-flex items-center gap-2 rounded-md border border-gray-700 px-4 py-2 text-sm font-semibold text-gray-300 hover:bg-gray-900"
+            >
+              <Network className="h-4 w-4" />
+              查看图谱
+            </Link>
+            <Link
+              href="/study/videos"
+              className="inline-flex items-center gap-2 rounded-md border border-gray-700 px-4 py-2 text-sm font-semibold text-gray-300 hover:bg-gray-900"
+            >
+              <FileVideo className="h-4 w-4" />
+              视频学习
             </Link>
             <Link
               href={continueReading[0]?.article?.slug ? `/articles/${continueReading[0].article.slug}` : '/latest'}
@@ -416,6 +447,171 @@ export default function StudyPage() {
           </div>
         </div>
       </section>
+
+      {diagnostics && (
+        <section className="mb-8 rounded-lg border border-gray-800 bg-gray-900/50 p-5">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-gray-100">学习诊断</h2>
+              <p className="mt-1 text-sm text-gray-500">
+                本周从 {diagnostics.week_start} 起，统计掌握率、阅读质量和输出练习入口。
+              </p>
+            </div>
+            <Link
+              href="/vocabulary?mode=review&weak=true"
+              className="inline-flex w-fit items-center gap-2 rounded-md border border-gray-700 px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-gray-900"
+            >
+              <TriangleAlert className="h-4 w-4" />
+              复习薄弱词
+            </Link>
+          </div>
+
+          <div className="mb-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-400">本周新词掌握率</span>
+                <Target className="h-4 w-4 text-blue-300" />
+              </div>
+              <p className="text-3xl font-black text-gray-100">{diagnostics.new_word_mastery.mastery_pct}%</p>
+              <p className="mt-2 text-sm text-gray-500">
+                {diagnostics.new_word_mastery.mastered}/{diagnostics.new_word_mastery.total} 个新词已掌握
+              </p>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-gray-800">
+                <div
+                  className="h-full bg-blue-500"
+                  style={{ width: `${diagnostics.new_word_mastery.mastery_pct}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-400">阅读速度变化</span>
+                {diagnostics.reading_speed_trend.change_pct >= 0 ? (
+                  <TrendingUp className="h-4 w-4 text-green-300" />
+                ) : (
+                  <TrendingDown className="h-4 w-4 text-amber-300" />
+                )}
+              </div>
+              <p className="text-3xl font-black text-gray-100">
+                {diagnostics.reading_speed_trend.current_wpm || '--'}
+                <span className="ml-1 text-base font-semibold text-gray-500">WPM</span>
+              </p>
+              <p className={`mt-2 text-sm ${
+                diagnostics.reading_speed_trend.change_pct >= 0 ? 'text-green-300' : 'text-amber-300'
+              }`}>
+                较上周 {diagnostics.reading_speed_trend.change_pct >= 0 ? '+' : ''}
+                {diagnostics.reading_speed_trend.change_pct}%
+              </p>
+              <p className="mt-1 text-xs text-gray-500">
+                本周 {diagnostics.reading_speed_trend.current_articles} 篇，上周 {diagnostics.reading_speed_trend.previous_articles} 篇
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-4 md:col-span-2">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-400">不同难度文章完成率</span>
+                <BarChart3 className="h-4 w-4 text-blue-300" />
+              </div>
+              <div className="space-y-3">
+                {diagnostics.difficulty_completions.map((item) => (
+                  <div key={item.difficulty}>
+                    <div className="mb-1 flex items-center justify-between text-sm">
+                      <span className="font-semibold text-gray-300">{difficultyLabels[item.difficulty]}</span>
+                      <span className="text-gray-500">
+                        {item.completed}/{item.total} · {item.rate_pct}%
+                      </span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-gray-800">
+                      <div className="h-full bg-green-500" style={{ width: `${item.rate_pct}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[1fr_1fr]">
+            <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-bold text-gray-100">遗忘最多的词</h3>
+                <RotateCcw className="h-4 w-4 text-amber-300" />
+              </div>
+              {diagnostics.most_forgotten_words.length === 0 ? (
+                <p className="rounded-md border border-dashed border-gray-700 p-4 text-sm text-gray-500">
+                  暂无反复遗忘记录。继续复习后这里会显示薄弱词。
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {diagnostics.most_forgotten_words.map((word) => (
+                    <Link
+                      key={word.id}
+                      href="/vocabulary?mode=review&weak=true"
+                      className="flex items-start justify-between gap-3 rounded-md border border-gray-800 p-3 transition-colors hover:border-gray-600"
+                    >
+                      <div>
+                        <p className="font-bold text-gray-100">{word.word}</p>
+                        <p className="mt-1 line-clamp-1 text-sm text-gray-500">
+                          {word.translation || word.context || '暂无释义'}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded border border-amber-700/70 px-2 py-1 text-xs font-semibold text-amber-300">
+                        忘记 {word.forgotten_count}
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-gray-800 bg-gray-950/50 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="font-bold text-gray-100">高频薄弱语法点</h3>
+                <Languages className="h-4 w-4 text-blue-300" />
+              </div>
+              {diagnostics.weak_grammar_points.length === 0 ? (
+                <p className="rounded-md border border-dashed border-gray-700 p-4 text-sm text-gray-500">
+                  暂无足够上下文。多查词、复习和完成文章后会生成语法倾向。
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {diagnostics.weak_grammar_points.map((point) => (
+                    <div key={point.name} className="rounded-md border border-gray-800 p-3">
+                      <div className="mb-1 flex items-center justify-between gap-3">
+                        <p className="font-semibold text-gray-100">{point.name}</p>
+                        <span className="text-xs text-gray-500">{point.count} 次</span>
+                      </div>
+                      <p className="text-sm leading-6 text-gray-500">{point.description}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <h3 className="mb-3 font-bold text-gray-100">输出练习</h3>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {diagnostics.practice_actions.map((action) => {
+                const Icon = practiceIcons[action.type];
+                return (
+                  <Link
+                    key={action.type}
+                    href={action.href}
+                    className="rounded-lg border border-gray-800 bg-gray-950/50 p-4 transition-colors hover:border-blue-700 hover:bg-blue-950/20"
+                  >
+                    <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-md bg-gray-800 text-blue-300">
+                      <Icon className="h-4 w-4" />
+                    </div>
+                    <p className="font-bold text-gray-100">{action.title}</p>
+                    <p className="mt-2 text-sm leading-6 text-gray-500">{action.description}</p>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
         <div className="space-y-6">

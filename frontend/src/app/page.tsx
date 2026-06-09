@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { articleAPI, resolveAPIAssetURL } from '@/lib/api';
+import { ArrowRight, BookOpen, Clock, Loader2, Search, Sparkles, Tags } from 'lucide-react';
+import { articleAPI, isRemoteHTTPURL, resolveAPIAssetURL } from '@/lib/api';
 import { Article } from '@/types';
-import { ArrowRight, Loader2, Sparkles } from 'lucide-react';
 
 const fallbackArticles: Article[] = [
   {
@@ -226,50 +226,59 @@ const difficultyLabels = {
   hard: '困难',
 };
 
-function MagazineArticleCard({ article, index }: { article: Article; index: number }) {
-  const href = article.id < 0 ? '/journals' : `/articles/${article.slug}`;
+const difficultyStyles = {
+  easy: 'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/20',
+  medium: 'bg-amber-50 text-amber-700 ring-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:ring-amber-500/20',
+  hard: 'bg-rose-50 text-rose-700 ring-rose-200 dark:bg-rose-500/10 dark:text-rose-300 dark:ring-rose-500/20',
+};
+
+function articleHref(article: Article) {
+  return article.id < 0 ? '/journals' : `/articles/${article.slug}`;
+}
+
+function ArticleRow({ article, featured = false }: { article: Article; featured?: boolean }) {
   const coverImageURL = article.cover_image ? resolveAPIAssetURL(article.cover_image) : '';
+  const shouldBypassImageOptimizer = isRemoteHTTPURL(coverImageURL);
 
   return (
     <Link
-      href={href}
-      className={`group block pb-8 lg:px-5 ${
-        index % 5 === 0 ? '' : 'lg:border-l lg:border-gray-500'
-      }`}
+      href={articleHref(article)}
+      className="group grid gap-4 border-b border-gray-200 py-5 transition-colors last:border-b-0 hover:border-gray-300 dark:border-gray-800 dark:hover:border-gray-700 sm:grid-cols-[116px_1fr]"
     >
-      <div className="relative mb-3 aspect-[16/9] w-full overflow-hidden bg-gray-900">
+      <div className="relative aspect-[4/3] overflow-hidden rounded-md bg-gray-100 dark:bg-gray-900">
         {coverImageURL ? (
           <Image
             src={coverImageURL}
             alt={article.title}
             fill
-            sizes="(max-width: 1024px) 50vw, 20vw"
+            sizes="120px"
             className="object-cover transition-transform duration-300 group-hover:scale-105"
+            unoptimized={shouldBypassImageOptimizer}
           />
-        ) : null}
+        ) : (
+          <BookOpen className="absolute left-1/2 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2 text-gray-400" />
+        )}
       </div>
 
-      <div className="mb-2 text-sm font-semibold text-red-500">
-        {article.source || 'MITTR'}
-        <span className="mx-2 text-gray-600">|</span>
-        <span>{article.category?.name || 'Artificial intelligence'}</span>
-      </div>
-
-      <h2 className="mb-2 text-[1.35rem] font-bold leading-snug text-gray-200 transition-colors group-hover:text-white">
-        {article.title}
-      </h2>
-
-      {article.title_cn && (
-        <p className="mb-3 line-clamp-2 text-[0.95rem] font-semibold leading-6 text-gray-400">
-          {article.title_cn}
-        </p>
-      )}
-
-      <div className="flex items-center justify-between text-sm text-gray-500">
-        <span>{article.published_at}</span>
-        <span>
-          {article.word_count}词&nbsp;&nbsp;{difficultyLabels[article.difficulty_level]}
-        </span>
+      <div className="min-w-0">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-gray-500 dark:text-gray-400">
+          <span>{article.source || 'MITTR'}</span>
+          {article.category?.name && <span>{article.category.name}</span>}
+          <span className={`rounded px-2 py-0.5 ring-1 ${difficultyStyles[article.difficulty_level]}`}>
+            {difficultyLabels[article.difficulty_level]}
+          </span>
+          {featured && <span className="text-blue-700 dark:text-blue-300">推荐</span>}
+        </div>
+        <h3 className="line-clamp-2 text-lg font-bold leading-snug text-gray-950 transition-colors group-hover:text-blue-700 dark:text-gray-100 dark:group-hover:text-blue-300">
+          {article.title}
+        </h3>
+        {article.title_cn && <p className="mt-1 line-clamp-1 text-sm font-medium text-gray-600 dark:text-gray-400">{article.title_cn}</p>}
+        {article.summary && <p className="mt-2 line-clamp-2 text-sm leading-6 text-gray-600 dark:text-gray-400">{article.summary}</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-gray-500">
+          <span>{article.published_at}</span>
+          <span>{article.word_count} 词</span>
+          <span>{article.reading_time} 分钟</span>
+        </div>
       </div>
     </Link>
   );
@@ -298,73 +307,123 @@ export default function Home() {
     fetchArticles();
   }, []);
 
-  return (
-    <div className="mx-auto max-w-[1460px] px-4 py-14 sm:px-6 lg:px-8">
-      <Link
-        href="/journals"
-        className="mb-12 inline-flex text-base font-semibold text-sky-500 hover:text-sky-400"
-      >
-        咕咕读外刊使用指南（首次使用必看）
-      </Link>
+  const featuredArticle = articles[0];
+  const latestArticles = useMemo(() => articles.slice(1, 7), [articles]);
 
-      <section className="mb-12">
-        <div className="mb-7 flex items-start justify-between gap-6">
+  return (
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <section className="grid gap-8 border-b border-gray-200 pb-8 dark:border-gray-800 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)] lg:items-start">
+        <div className="space-y-6">
           <div>
-            <div className="mb-6 flex items-center gap-3">
-              <Sparkles className="h-7 w-7 text-gray-300" />
-              <h1 className="text-3xl font-black tracking-tight text-gray-100">
-                我的订阅
-              </h1>
-              <Link
-                href="/journals"
-                className="rounded-md border border-gray-600 px-3 py-1.5 text-sm font-medium text-gray-300 hover:bg-gray-900"
-              >
-                管理订阅
-              </Link>
-            </div>
-            <p className="text-base text-gray-500">
-              根据你的外刊和分类订阅筛选出的最新文章。
+            <p className="mb-3 inline-flex items-center gap-2 rounded-md bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700 ring-1 ring-blue-100 dark:bg-blue-500/10 dark:text-blue-300 dark:ring-blue-500/20">
+              <Sparkles className="h-4 w-4" />
+              英文阅读学习台
+            </p>
+            <h1 className="max-w-xl text-3xl font-black leading-tight text-gray-950 dark:text-gray-100 sm:text-4xl">
+              把每一篇英文材料读成可复习的积累。
+            </h1>
+            <p className="mt-4 max-w-2xl text-base leading-7 text-gray-600 dark:text-gray-400">
+              从外刊、公开作品和每日任务进入阅读，划词查义、收藏句子，再回到生词本做间隔复习。
             </p>
           </div>
-          <Link
-            href="/journals"
-            className="mt-10 hidden items-center gap-2 text-base font-medium text-gray-400 hover:text-gray-200 md:inline-flex"
-          >
-            查看更多
-            <ArrowRight className="h-4 w-4" />
-          </Link>
+
+          <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-1">
+            <Link href="/study" className="group flex items-center justify-between rounded-md border border-gray-200 bg-white p-4 transition-colors hover:border-blue-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-blue-700">
+              <span>
+                <span className="block text-sm font-bold text-gray-950 dark:text-gray-100">每日学习</span>
+                <span className="mt-1 block text-xs text-gray-500">继续今天的阅读任务</span>
+              </span>
+              <ArrowRight className="h-4 w-4 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+            </Link>
+            <Link href="/vocabulary" className="group flex items-center justify-between rounded-md border border-gray-200 bg-white p-4 transition-colors hover:border-blue-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-blue-700">
+              <span>
+                <span className="block text-sm font-bold text-gray-950 dark:text-gray-100">生词复习</span>
+                <span className="mt-1 block text-xs text-gray-500">查看到期和薄弱词</span>
+              </span>
+              <ArrowRight className="h-4 w-4 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+            </Link>
+            <Link href="/ao3" className="group flex items-center justify-between rounded-md border border-gray-200 bg-white p-4 transition-colors hover:border-blue-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-blue-700">
+              <span>
+                <span className="block text-sm font-bold text-gray-950 dark:text-gray-100">AO3 阅读</span>
+                <span className="mt-1 block text-xs text-gray-500">搜索公开作品并精读</span>
+              </span>
+              <ArrowRight className="h-4 w-4 text-gray-400 group-hover:text-blue-600 dark:group-hover:text-blue-300" />
+            </Link>
+          </div>
         </div>
 
-        <div className="mb-6 border-t border-gray-700" />
-
-        {loading ? (
-          <div className="flex min-h-[420px] items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-gray-500" />
+        <div className="rounded-md border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-950">
+          <div className="mb-4 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-black text-gray-950 dark:text-gray-100">今日推荐</h2>
+              <p className="mt-1 text-sm text-gray-500">最近更新里最靠前的一篇</p>
+            </div>
+            <Link href="/latest" className="inline-flex items-center gap-1 text-sm font-semibold text-blue-700 hover:text-blue-600 dark:text-blue-300 dark:hover:text-blue-200">
+              更多
+              <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-x-0 gap-y-2 sm:grid-cols-2 lg:grid-cols-5">
-            {articles.slice(0, 10).map((article, index) => (
-              <MagazineArticleCard key={article.id} article={article} index={index} />
-            ))}
-          </div>
-        )}
+          {loading ? (
+            <div className="flex min-h-[280px] items-center justify-center">
+              <Loader2 className="h-7 w-7 animate-spin text-gray-500" />
+            </div>
+          ) : featuredArticle ? (
+            <ArticleRow article={featuredArticle} featured />
+          ) : (
+            <div className="py-12 text-center text-sm text-gray-500">暂无文章</div>
+          )}
+        </div>
       </section>
 
-      <section className="mt-6">
-        <h2 className="mb-6 text-3xl font-black tracking-tight text-gray-100">
-          最近更新
-        </h2>
-        <div className="border-t border-gray-700 pt-6">
-          <div className="grid grid-cols-1 gap-x-0 gap-y-2 sm:grid-cols-2 lg:grid-cols-5">
-            {articles.slice(0, 5).map((article, index) => (
-              <MagazineArticleCard
-                key={`latest-${article.id}`}
-                article={article}
-                index={index}
-              />
-            ))}
+      <section className="grid gap-8 py-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div>
+          <div className="mb-3 flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-black text-gray-950 dark:text-gray-100">最新文章</h2>
+              <p className="mt-1 text-sm text-gray-500">按发布时间排列，适合快速扫读选择。</p>
+            </div>
+            <Link href="/journals" className="hidden items-center gap-1 text-sm font-semibold text-gray-700 hover:text-gray-950 dark:text-gray-300 dark:hover:text-white sm:inline-flex">
+              全部外刊
+              <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
+
+          {loading ? (
+            <div className="flex min-h-[360px] items-center justify-center rounded-md border border-gray-200 bg-white dark:border-gray-800 dark:bg-gray-950">
+              <Loader2 className="h-7 w-7 animate-spin text-gray-500" />
+            </div>
+          ) : (
+            <div className="rounded-md border border-gray-200 bg-white px-5 dark:border-gray-800 dark:bg-gray-950">
+              {latestArticles.map((article) => (
+                <ArticleRow key={article.id} article={article} />
+              ))}
+            </div>
+          )}
         </div>
+
+        <aside className="space-y-4">
+          <Link href="/journals" className="flex items-start gap-3 rounded-md border border-gray-200 bg-white p-4 transition-colors hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700">
+            <Tags className="mt-0.5 h-5 w-5 text-emerald-600 dark:text-emerald-300" />
+            <span>
+              <span className="block text-sm font-bold text-gray-950 dark:text-gray-100">订阅与分类</span>
+              <span className="mt-1 block text-sm leading-6 text-gray-500">按外刊来源和主题管理阅读范围。</span>
+            </span>
+          </Link>
+          <Link href="/latest" className="flex items-start gap-3 rounded-md border border-gray-200 bg-white p-4 transition-colors hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700">
+            <Clock className="mt-0.5 h-5 w-5 text-amber-600 dark:text-amber-300" />
+            <span>
+              <span className="block text-sm font-bold text-gray-950 dark:text-gray-100">最近更新</span>
+              <span className="mt-1 block text-sm leading-6 text-gray-500">只看新内容，不被首页信息流打断。</span>
+            </span>
+          </Link>
+          <Link href="/ao3" className="flex items-start gap-3 rounded-md border border-gray-200 bg-white p-4 transition-colors hover:border-gray-300 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-gray-700">
+            <Search className="mt-0.5 h-5 w-5 text-blue-600 dark:text-blue-300" />
+            <span>
+              <span className="block text-sm font-bold text-gray-950 dark:text-gray-100">AO3 搜索</span>
+              <span className="mt-1 block text-sm leading-6 text-gray-500">公开作品搜索、站内阅读、划词和句子精读。</span>
+            </span>
+          </Link>
+        </aside>
       </section>
     </div>
   );

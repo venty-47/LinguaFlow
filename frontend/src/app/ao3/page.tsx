@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertTriangle, ArrowLeft, ArrowRight, ExternalLink, Loader2, Search } from 'lucide-react';
+import { formatAO3Chapters } from '@/lib/ao3';
 import { ao3API } from '@/lib/api';
 import { AO3SearchResponse, AO3WorkSummary } from '@/types';
 
@@ -32,7 +33,10 @@ function AO3SearchContent() {
   const works = useMemo(() => result?.works || [], [result]);
   const canGoBack = page > 1;
   const stats = useMemo(
-    () => works.map((work) => [stat(work.words, '词数'), stat(work.chapters, '章节'), stat(work.kudos, 'Kudos'), stat(work.hits, '点击')].filter(Boolean)),
+    () =>
+      works.map((work) =>
+        [stat(work.words, '词数'), formatAO3Chapters(work.chapters), stat(work.kudos, 'Kudos'), stat(work.hits, '点击')].filter(Boolean)
+      ),
     [works]
   );
 

@@ -69,25 +69,30 @@ a {
 .reading-selection-highlight {
   background: rgba(14, 165, 233, 0.22);
   color: var(--foreground);
-  border-radius: 3px;
-  padding: 0.05rem 0.12rem;
+  border: 1px solid rgba(56, 189, 248, 0.72);
+  border-radius: 4px;
+  box-shadow: 0 0 0 2px rgba(14, 165, 233, 0.12);
+  padding: 0.04rem 0.14rem;
 }
 
 /* 划词翻译气泡 */
 .translation-tooltip {
   position: absolute;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: #fffdfa;
+  border: 1px solid rgba(120, 113, 108, 0.24);
   border-radius: 8px;
-  padding: 12px;
-  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.18);
+  padding: 14px;
+  box-shadow: 0 18px 42px rgba(41, 37, 36, 0.18);
   z-index: 1000;
-  max-width: 400px;
+  width: min(88vw, 420px);
+  max-width: 420px;
   animation: fadeIn 0.2s ease-in;
 }
 
 .dark .translation-tooltip {
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  background: #171a18;
+  border-color: rgba(94, 234, 212, 0.16);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.46);
 }
 
 html:not(.dark) .bg-gray-950 {

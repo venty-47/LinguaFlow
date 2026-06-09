@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useAuthStore } from '@/store/authStore';
 import { authAPI, resolveAPIAssetURL } from '@/lib/api';
-import { ChevronDown, Search, User, LogOut, Menu } from 'lucide-react';
+import { ChevronDown, User, LogOut, Menu } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import ThemeToggle from './ThemeToggle';
 
@@ -30,12 +30,32 @@ export default function Header() {
 
   const navItems = [
     { name: '首页', path: '/' },
-    { name: '每日学习', path: '/study' },
-    { name: '最近更新', path: '/latest' },
-    { name: '全部外刊', path: '/journals' },
-    { name: 'AO3 同人', path: '/ao3' },
-    { name: '复习', path: '/vocabulary' },
+    { name: 'AO3', path: '/ao3' },
   ];
+
+  const groupedNavItems = [
+    {
+      name: '学习',
+      items: [
+        { name: '每日学习', path: '/study' },
+        { name: '视频学习', path: '/study/videos' },
+        { name: '生词复习', path: '/vocabulary' },
+        { name: '知识图谱', path: '/knowledge-graph' },
+        { name: '阅读历史', path: '/history' },
+      ],
+    },
+    {
+      name: '阅读',
+      items: [
+        { name: '最近更新', path: '/latest' },
+        { name: '全部外刊', path: '/journals' },
+        { name: '我的收藏', path: '/subscriptions' },
+      ],
+    },
+  ];
+
+  const isPathActive = (path: string) => pathname === path || pathname.startsWith(`${path}/`);
+  const isGroupActive = (items: { path: string }[]) => items.some((item) => isPathActive(item.path));
 
   return (
     <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/95 backdrop-blur-sm dark:border-gray-800 dark:bg-[#1d1d1d]/95">
@@ -47,7 +67,7 @@ export default function Header() {
           </Link>
 
           {/* Navigation */}
-          <nav className="hidden md:flex items-center space-x-8">
+          <nav className="hidden md:flex items-center space-x-7">
             {navItems.map((item) => (
               <Link
                 key={item.path}
@@ -64,30 +84,61 @@ export default function Header() {
                 )}
               </Link>
             ))}
-            <Link
-              href="/more"
-              className="flex items-center gap-1 py-5 text-sm font-bold text-gray-600 transition-colors hover:text-gray-950 dark:text-gray-300 dark:hover:text-white"
-            >
-              更多
-              <ChevronDown className="h-4 w-4" />
-            </Link>
+            {groupedNavItems.map((group) => {
+              const active = isGroupActive(group.items);
+
+              return (
+                <div key={group.name} className="group relative">
+                  <button
+                    className={`flex items-center gap-1 py-5 text-sm font-bold transition-colors hover:text-gray-950 dark:hover:text-white ${
+                      active
+                        ? 'text-gray-950 dark:text-white'
+                        : 'text-gray-600 dark:text-gray-300'
+                    }`}
+                  >
+                    {group.name}
+                    <ChevronDown className="h-4 w-4 transition-transform group-hover:rotate-180" />
+                    {active && (
+                      <span className="absolute inset-x-0 bottom-0 h-0.5 bg-gray-950 dark:bg-white" />
+                    )}
+                  </button>
+                  <div className="invisible absolute left-1/2 top-full w-40 -translate-x-1/2 rounded-lg border border-gray-200 bg-white py-2 opacity-0 shadow-lg transition-all group-hover:visible group-hover:opacity-100 dark:border-gray-800 dark:bg-gray-900">
+                    {group.items.map((item) => (
+                      <Link
+                        key={item.path}
+                        href={item.path}
+                        className={`block px-4 py-2 text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 ${
+                          isPathActive(item.path)
+                            ? 'font-semibold text-gray-950 dark:text-white'
+                            : 'text-gray-600 dark:text-gray-300'
+                        }`}
+                      >
+                        {item.name}
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
             <span className="h-7 w-px bg-gray-200 dark:bg-gray-700" />
             <Link
               href="/membership"
-              className="py-5 text-sm font-bold text-gray-700 transition-colors hover:text-gray-950 dark:text-gray-200 dark:hover:text-white"
+              className={`relative py-5 text-sm font-bold transition-colors hover:text-gray-950 dark:hover:text-white ${
+                pathname === '/membership'
+                  ? 'text-gray-950 dark:text-white'
+                  : 'text-gray-600 dark:text-gray-300'
+              }`}
             >
-              加入会员
+              会员
+              {pathname === '/membership' && (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 bg-gray-950 dark:bg-white" />
+              )}
             </Link>
           </nav>
 
           {/* Right section */}
           <div className="flex items-center space-x-4">
             <ThemeToggle />
-
-            {/* Search */}
-            <Link href="/ao3" className="p-2 text-gray-600 transition-colors hover:text-gray-950 dark:text-gray-300 dark:hover:text-white">
-              <Search className="w-6 h-6" />
-            </Link>
 
             {/* User section */}
             {isAuthenticated && user ? (
@@ -123,6 +174,13 @@ export default function Header() {
                       每日学习
                     </Link>
                     <Link
+                      href="/study/videos"
+                      className="block px-4 py-2 text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                      onClick={() => setShowUserMenu(false)}
+                    >
+                      视频学习
+                    </Link>
+                    <Link
                       href="/profile"
                       className="block px-4 py-2 text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
                       onClick={() => setShowUserMenu(false)}
@@ -141,7 +199,7 @@ export default function Header() {
                       className="block px-4 py-2 text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
                       onClick={() => setShowUserMenu(false)}
                     >
-                      我的订阅
+                      我的收藏
                     </Link>
                     <Link
                       href="/vocabulary"
@@ -149,6 +207,13 @@ export default function Header() {
                       onClick={() => setShowUserMenu(false)}
                     >
                       生词本
+                    </Link>
+                    <Link
+                      href="/knowledge-graph"
+                      className="block px-4 py-2 text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                      onClick={() => setShowUserMenu(false)}
+                    >
+                      知识图谱
                     </Link>
                     <Link
                       href="/history"

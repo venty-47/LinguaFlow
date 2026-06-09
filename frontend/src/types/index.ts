@@ -18,6 +18,8 @@ export interface Article {
   difficulty_level: 'easy' | 'medium' | 'hard';
   word_count: number;
   reading_time: number;
+  keywords?: string;
+  cefr_level?: 'A1' | 'A2' | 'B1' | 'B2' | 'C1' | 'C2';
   view_count: number;
   status: string;
   is_featured: boolean;
@@ -56,6 +58,151 @@ export interface Vocabulary {
   review_ease: number;
   created_at: string;
   updated_at: string;
+}
+
+export type VocabularyExerciseType =
+  | 'en_to_zh_choice'
+  | 'zh_to_en_spelling'
+  | 'context_fill_blank'
+  | 'audio_word_choice'
+  | 'sentence_meaning_choice';
+
+export interface VocabularyExercise {
+  vocabulary_id: number;
+  word: string;
+  type: VocabularyExerciseType;
+  prompt: string;
+  context?: string;
+  options?: string[];
+  audio_text?: string;
+  placeholder?: string;
+}
+
+export interface VocabularyAnswerResult {
+  data: Vocabulary;
+  correct: boolean;
+  rating: 'forgot' | 'hard' | 'good';
+  correct_answer: string;
+  message: string;
+}
+
+export interface KnowledgeGraphNode {
+  id: string;
+  db_id: number;
+  type:
+    | 'word'
+    | 'meaning'
+    | 'definition'
+    | 'context'
+    | 'example'
+    | 'article'
+    | 'topic'
+    | 'grammar'
+    | 'weakness'
+    | 'review';
+  label: string;
+  description?: string;
+  weight: number;
+  mastery?: number;
+  metadata?: {
+    vocabulary_id?: number;
+    article_id?: number;
+    slug?: string;
+    phonetic?: string;
+    is_learned?: boolean;
+    review_count?: number;
+    forgotten_count?: number;
+    next_review_at?: string | null;
+    difficulty_level?: string;
+    cefr_level?: string;
+    source?: string;
+    published_at?: string;
+    article_word_count?: number;
+  };
+}
+
+export interface KnowledgeGraphEdge {
+  id: string;
+  db_id: number;
+  source: string;
+  target: string;
+  relation: string;
+  label: string;
+  weight: number;
+}
+
+export interface KnowledgeGraphStats {
+  total_nodes: number;
+  total_edges: number;
+  related_words: number;
+  articles: number;
+  topics: number;
+  grammar_points: number;
+  weak_signals: number;
+  due_reviews: number;
+  node_types: Record<string, number>;
+}
+
+export interface KnowledgeGraph {
+  focus?: KnowledgeGraphNode;
+  nodes: KnowledgeGraphNode[];
+  edges: KnowledgeGraphEdge[];
+  stats: KnowledgeGraphStats;
+}
+
+export type VocabularyKnowledgeGraph = KnowledgeGraph;
+
+export interface KnowledgeGraphRecommendation {
+  id: string;
+  type: 'review' | 'weakness' | 'grammar' | 'reading' | 'context' | 'build' | string;
+  priority: number;
+  title: string;
+  description: string;
+  action_label: string;
+  action_href?: string;
+  focus_key?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphPathStep {
+  node: KnowledgeGraphNode;
+  via?: string;
+  relation?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface KnowledgeGraphLearningPath {
+  id: string;
+  type: 'review' | 'weakness' | 'topic' | string;
+  priority: number;
+  title: string;
+  description: string;
+  action_label: string;
+  action_href?: string;
+  focus_key?: string;
+  steps: KnowledgeGraphPathStep[];
+}
+
+export interface KnowledgeGraphTopicCluster {
+  id: string;
+  topic: KnowledgeGraphNode;
+  node_count: number;
+  edge_count: number;
+  word_count: number;
+  article_count: number;
+  focus_key: string;
+  nodes: KnowledgeGraphNode[];
+}
+
+export interface KnowledgeGraphOverview {
+  stats: KnowledgeGraphStats;
+  weak_nodes: KnowledgeGraphNode[];
+  due_nodes: KnowledgeGraphNode[];
+  recent_nodes: KnowledgeGraphNode[];
+  top_topics: KnowledgeGraphNode[];
+  topic_clusters: KnowledgeGraphTopicCluster[];
+  recommendations: KnowledgeGraphRecommendation[];
+  learning_paths: KnowledgeGraphLearningPath[];
 }
 
 export interface ReadHistory {
@@ -106,6 +253,94 @@ export interface StudyToday {
   is_completed: boolean;
   streak: number;
   calendar: StudyRecord[];
+}
+
+export interface StudyDiagnostics {
+  week_start: string;
+  new_word_mastery: {
+    total: number;
+    mastered: number;
+    mastery_pct: number;
+  };
+  most_forgotten_words: Array<{
+    id: number;
+    word: string;
+    translation?: string;
+    forgotten_count: number;
+    context?: string;
+  }>;
+  reading_speed_trend: {
+    current_wpm: number;
+    previous_wpm: number;
+    change_pct: number;
+    current_articles: number;
+    previous_articles: number;
+  };
+  difficulty_completions: Array<{
+    difficulty: 'easy' | 'medium' | 'hard';
+    total: number;
+    completed: number;
+    rate_pct: number;
+  }>;
+  weak_grammar_points: Array<{
+    name: string;
+    count: number;
+    description: string;
+  }>;
+  practice_actions: Array<{
+    type: 'rewrite' | 'imitation' | 'cn_en' | 'ai_correction';
+    title: string;
+    description: string;
+    href: string;
+  }>;
+  generated_at: string;
+}
+
+export type VideoLessonStatus =
+  | 'uploaded'
+  | 'extracting_audio'
+  | 'transcribing'
+  | 'segmenting'
+  | 'ready'
+  | 'failed'
+  | 'cancelled';
+
+export interface VideoLesson {
+  id: number;
+  user_id: number;
+  title: string;
+  description?: string;
+  source?: string;
+  source_url?: string;
+  original_filename?: string;
+  video_path: string;
+  audio_path?: string;
+  transcript_path?: string;
+  duration_seconds: number;
+  file_size_bytes: number;
+  mime_type?: string;
+  language: string;
+  status: VideoLessonStatus;
+  progress: number;
+  error?: string;
+  last_position_seconds: number;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VideoSubtitle {
+  id: number;
+  video_lesson_id: number;
+  sort_order: number;
+  start_seconds: number;
+  end_seconds: number;
+  text: string;
+  translation?: string;
+  confidence: number;
+  source: 'auto' | 'manual' | 'edited' | 'imported';
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Subscription {
@@ -188,6 +423,103 @@ export interface ArticleAssistantResult {
   provider: string;
 }
 
+export interface ArticleStudyNoteSentence {
+  text: string;
+  translation?: string;
+  reason?: string;
+  tips?: string[];
+}
+
+export interface ArticleStudyNotePoint {
+  title: string;
+  description: string;
+  examples?: string[];
+}
+
+export interface ArticleStudyNoteExpression {
+  original: string;
+  alternative: string;
+  note?: string;
+}
+
+export interface ArticleStudyNote {
+  id: number;
+  user_id: number;
+  article_id: number;
+  title: string;
+  summary: string;
+  keywords: string[];
+  difficult_sentences: ArticleStudyNoteSentence[];
+  grammar_points: ArticleStudyNotePoint[];
+  expression_replacements: ArticleStudyNoteExpression[];
+  review_plan: string[];
+  source_stats: {
+    translated_texts: number;
+    dictionary_lookups: number;
+    saved_words: number;
+    analyzed_sentences: number;
+    assistant_questions: number;
+  };
+  provider: string;
+  generated_at: string;
+  refreshed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ArticleKnowledgeGraphNode {
+  id: string;
+  type: 'article' | 'topic' | 'structure' | 'word' | 'grammar' | 'sentence' | 'review' | string;
+  label: string;
+  description?: string;
+  weight: number;
+  mastery?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ArticleKnowledgeGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation: string;
+  label: string;
+  weight: number;
+}
+
+export interface ArticleKnowledgeGraphLane {
+  id: 'structure' | 'vocabulary' | 'grammar' | 'sentences' | 'review' | string;
+  title: string;
+  description: string;
+  node_ids: string[];
+  nodes: ArticleKnowledgeGraphNode[];
+}
+
+export interface ArticleKnowledgeGraphAction {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  label: string;
+  href?: string;
+  focus_node_id?: string;
+  priority: number;
+}
+
+export interface ArticleKnowledgeGraph {
+  article: ArticleKnowledgeGraphNode;
+  lanes: ArticleKnowledgeGraphLane[];
+  edges: ArticleKnowledgeGraphEdge[];
+  actions: ArticleKnowledgeGraphAction[];
+  stats: {
+    total_nodes: number;
+    total_edges: number;
+    vocabulary_count: number;
+    grammar_count: number;
+    sentence_count: number;
+    review_count: number;
+  };
+}
+
 export interface ArticleCompletion {
   article: Article;
   history: ReadHistory;
@@ -200,7 +532,37 @@ export interface ArticleCompletion {
     due_review_words: number;
   };
   words: Vocabulary[];
+  study_note?: ArticleStudyNote;
   next_article?: Article;
+}
+
+export interface ArticleQuizQuestion {
+  id: number;
+  question_type: 'single_choice';
+  prompt: string;
+  options: string[];
+  sort_order: number;
+  correct_index?: number;
+  explanation?: string;
+  user_answer?: number;
+  is_correct?: boolean;
+}
+
+export interface ArticleQuizAttempt {
+  id: number;
+  score: number;
+  total: number;
+  percentage: number;
+  answers: number[];
+  completed_at: string;
+}
+
+export interface ArticleQuiz {
+  id: number;
+  article_id: number;
+  title: string;
+  questions: ArticleQuizQuestion[];
+  latest_attempt?: ArticleQuizAttempt;
 }
 
 export interface RSSFeedSummary {

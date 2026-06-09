@@ -20,6 +20,7 @@ import {
   Square,
   Volume2,
 } from 'lucide-react';
+import { formatAO3Chapters } from '@/lib/ao3';
 import { ao3API, resolveAPIAssetURL, translationAPI, ttsAPI, vocabularyAPI } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { AO3Work, SentenceAnalysis, Vocabulary } from '@/types';
@@ -53,7 +54,7 @@ function getDictionaryWord(text: string) {
   return /^[a-z]+(?:['’][a-z]+)?$/.test(word) ? word : '';
 }
 
-function getWordFromPoint(x: number, y: number) {
+function getWordMatchFromPoint(x: number, y: number) {
   let node: Node | null = null;
   let offset = 0;
   const doc = document as Document & {
@@ -71,22 +72,29 @@ function getWordFromPoint(x: number, y: number) {
     offset = position?.offset || 0;
   }
 
-  if (!node || node.nodeType !== Node.TEXT_NODE) return '';
+  if (!node || node.nodeType !== Node.TEXT_NODE) return null;
   const text = node.textContent || '';
-  if (!text) return '';
+  if (!text) return null;
 
   if (offset >= text.length) offset = text.length - 1;
   if (offset > 0 && !/[A-Za-z]/.test(text[offset]) && /[A-Za-z]/.test(text[offset - 1])) {
     offset -= 1;
   }
-  if (!/[A-Za-z]/.test(text[offset])) return '';
+  if (!/[A-Za-z]/.test(text[offset])) return null;
 
   let start = offset;
   let end = offset + 1;
   while (start > 0 && /[A-Za-z'’]/.test(text[start - 1])) start -= 1;
   while (end < text.length && /[A-Za-z'’]/.test(text[end])) end += 1;
 
-  return normalizeWord(text.slice(start, end));
+  const word = normalizeWord(text.slice(start, end));
+  if (!word) return null;
+
+  const range = document.createRange();
+  range.setStart(node, start);
+  range.setEnd(node, end);
+
+  return { word, range };
 }
 
 function tokenizeParagraph(paragraph: string) {
@@ -143,6 +151,7 @@ export default function AO3WorkPage() {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
 
   const highlightRef = useRef<HTMLElement | null>(null);
+  const sentenceElementRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ttsRequestIdRef = useRef(0);
   const ttsQueueIndexRef = useRef<number | null>(null);
@@ -165,6 +174,22 @@ export default function AO3WorkPage() {
   const paragraphs = useMemo(() => currentChapter?.paragraphs?.filter(Boolean) || [], [currentChapter]);
   const sentenceQueue = useMemo(() => buildSentenceQueue(paragraphs), [paragraphs]);
   const selectedVocabulary = vocabularyByWord.get(normalizeWord(selectedText));
+
+  useEffect(() => {
+    const activeSentenceKey = ttsPlayingKey || ttsLoadingKey;
+    if (!activeSentenceKey || ttsPaused) return;
+
+    const activeElement = sentenceElementRefs.current[activeSentenceKey];
+    if (!activeElement) return;
+
+    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    activeElement.scrollIntoView({
+      behavior: prefersReducedMotion ? 'auto' : 'smooth',
+      block: 'center',
+      inline: 'nearest',
+    });
+  }, [ttsLoadingKey, ttsPaused, ttsPlayingKey]);
+
   const highlightedVocabularyCount = useMemo(() => {
     const matched = new Set<string>();
     paragraphs.forEach((paragraph) => {
@@ -283,13 +308,14 @@ export default function AO3WorkPage() {
   const handleParagraphClick = (event: MouseEvent<HTMLParagraphElement>, paragraph: string) => {
     const selected = window.getSelection()?.toString().trim();
     if (selected) return;
-    const word = getWordFromPoint(event.clientX, event.clientY);
-    if (!word) return;
+    const match = getWordMatchFromPoint(event.clientX, event.clientY);
+    if (!match) return;
 
-    setSelectedText(word);
+    setSelectedText(match.word);
     setTooltipContext(paragraph);
     setTooltipMode('dictionary');
     setTooltipPosition({ x: event.clientX, y: event.clientY - 12 + window.scrollY });
+    applyHighlight(match.range);
     setShowTranslation(true);
   };
 
@@ -472,6 +498,16 @@ export default function AO3WorkPage() {
     playTTSItem({ key: item.key, text: item.text, paragraphIndex: item.paragraphIndex }, startIndex);
   };
 
+  const playParagraphQueueFrom = (paragraphIndex: number, paragraph: string) => {
+    const queueIndex = sentenceQueue.findIndex((item) => item.paragraphIndex === paragraphIndex);
+    if (queueIndex >= 0) {
+      playSentenceQueueFrom(queueIndex);
+      return;
+    }
+
+    playTTSItem({ key: `paragraph-${paragraphIndex}`, text: paragraph, paragraphIndex });
+  };
+
   const handlePauseOrResumeTTS = () => {
     if (!ttsPlayingKey) return;
     if (ttsPaused) {
@@ -538,18 +574,33 @@ export default function AO3WorkPage() {
       return (
         <span
           key={sentenceKey}
+          ref={(element) => {
+            sentenceElementRefs.current[sentenceKey] = element;
+          }}
+          onClick={(event) => {
+            if (ttsQueueIndex === null) return;
+            if (queueIndex < 0) return;
+
+            event.stopPropagation();
+            playSentenceQueueFrom(queueIndex);
+          }}
           onDoubleClick={(event) => {
             event.stopPropagation();
+            if (queueIndex >= 0) {
+              playSentenceQueueFrom(queueIndex);
+              return;
+            }
+
             playTTSItem({ key: sentenceKey, text: sentence, paragraphIndex });
           }}
-          title="双击朗读此句"
+          title="双击从此句开始逐句播放"
           className={`rounded px-0.5 transition-colors ${
             ttsPlayingKey === sentenceKey
               ? 'bg-sky-500/20 text-sky-50 ring-1 ring-sky-300/30'
               : queueIndex === ttsQueueIndex
                 ? 'text-sky-100'
                 : ''
-          }`}
+          } ${ttsQueueIndex !== null ? 'cursor-pointer hover:bg-sky-500/10' : ''}`}
         >
           {renderSentenceText(sentence, sentenceKey)}
           {sentenceIndex < splitSentences(paragraph).length - 1 ? ' ' : ''}
@@ -563,6 +614,9 @@ export default function AO3WorkPage() {
       return (
         <span
           key={sentenceKey}
+          ref={(element) => {
+            sentenceElementRefs.current[sentenceKey] = element;
+          }}
           onDoubleClick={(event) => {
             event.stopPropagation();
             playTTSItem({ key: sentenceKey, text: sentence, paragraphIndex: null });
@@ -742,7 +796,7 @@ export default function AO3WorkPage() {
             {work.rating && <span className="rounded border border-gray-300 px-2 py-0.5 dark:border-gray-700">{work.rating}</span>}
             {work.language && <span>{work.language}</span>}
             {work.words && <span>词数 {work.words}</span>}
-            {work.chapters && <span>章节 {work.chapters}</span>}
+            {work.chapters && <span>{formatAO3Chapters(work.chapters)}</span>}
             {work.published_at && <span>发布 {work.published_at}</span>}
             {work.updated_at && <span>更新 {work.updated_at}</span>}
             {highlightedVocabularyCount > 0 && <span className="text-amber-300">已高亮 {highlightedVocabularyCount} 个旧词</span>}
@@ -825,7 +879,7 @@ export default function AO3WorkPage() {
                 <Volume2 className="h-4 w-4 text-sky-300" />
                 听力跟读
               </h3>
-              <p className="mt-1 text-xs text-gray-500">模型 TTS 优先，失败时自动切换浏览器朗读；双击正文句子可单句播放。</p>
+              <p className="mt-1 text-xs text-gray-500">模型 TTS 优先；逐句播放时可点击正文句子跳到该句继续播放。</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -930,7 +984,7 @@ export default function AO3WorkPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => playTTSItem({ key: `paragraph-${index}`, text: paragraph, paragraphIndex: index })}
+                      onClick={() => playParagraphQueueFrom(index, paragraph)}
                       className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-semibold hover:bg-gray-900 ${
                         speakingIndex === index ? 'border-sky-500 text-sky-300' : 'border-gray-700 text-gray-300'
                       }`}

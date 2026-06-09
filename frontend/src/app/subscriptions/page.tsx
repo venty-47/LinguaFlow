@@ -53,13 +53,13 @@ export default function SubscriptionsPage() {
   return (
     <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
       <div className="mb-8">
-        <h1 className="mb-2 text-3xl font-black">我的订阅</h1>
-        <p className="text-gray-500">这里汇总你订阅过的文章。</p>
+        <h1 className="mb-2 text-3xl font-black">我的收藏</h1>
+        <p className="text-gray-500">这里汇总你收藏过的文章。</p>
       </div>
 
       {subscriptions.length === 0 ? (
         <div className="rounded-lg border border-gray-800 bg-gray-900/40 p-10 text-center text-gray-500">
-          还没有订阅文章。打开文章详情页，点击“订阅”即可添加。
+          还没有收藏文章。打开文章详情页，点击“收藏”即可添加。
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">

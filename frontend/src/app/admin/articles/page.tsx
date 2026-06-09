@@ -413,6 +413,7 @@ export default function AdminArticlesPage() {
                         <td className="px-4 py-4 text-xs text-gray-500">
                           <div>{article.word_count} 词</div>
                           <div>{article.reading_time} 分钟</div>
+                          {article.cefr_level && <div>CEFR {article.cefr_level}</div>}
                           <div>{article.view_count} 次浏览</div>
                         </td>
                         <td className="px-4 py-4">

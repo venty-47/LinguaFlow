@@ -5,6 +5,13 @@ import { translationAPI, vocabularyAPI } from '@/lib/api';
 import { Vocabulary } from '@/types';
 import { Bot, BookmarkCheck, BookmarkPlus, Loader2, RotateCcw, Volume2 } from 'lucide-react';
 
+type Accent = 'uk' | 'us';
+
+type DictionaryDefinition = {
+  pos?: string;
+  definition: string;
+};
+
 interface TranslationTooltipProps {
   selectedText: string;
   position: { x: number; y: number };
@@ -32,9 +39,14 @@ export default function TranslationTooltip({
 }: TranslationTooltipProps) {
   const [translation, setTranslation] = useState<string>('');
   const [phonetic, setPhonetic] = useState('');
+  const [ukPhonetic, setUkPhonetic] = useState('');
+  const [usPhonetic, setUsPhonetic] = useState('');
   const [definition, setDefinition] = useState('');
+  const [dictionaryDefinitions, setDictionaryDefinitions] = useState<DictionaryDefinition[]>([]);
   const [dictionaryError, setDictionaryError] = useState('');
   const [speechUrl, setSpeechUrl] = useState('');
+  const [ukSpeechUrl, setUkSpeechUrl] = useState('');
+  const [usSpeechUrl, setUsSpeechUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -50,38 +62,65 @@ export default function TranslationTooltip({
       try {
         setLoading(true);
         setPhonetic('');
+        setUkPhonetic('');
+        setUsPhonetic('');
         setDefinition('');
+        setDictionaryDefinitions([]);
         setDictionaryError('');
         setSpeechUrl('');
+        setUkSpeechUrl('');
+        setUsSpeechUrl('');
 
         if (mode === 'dictionary') {
           // 单词模式：使用词典 API 获取详细释义
-          const response = await translationAPI.lookupWord(selectedText);
+          const response = await translationAPI.lookupWord(selectedText, {
+            article_id: articleId,
+            context,
+          });
           const data = response.data.data;
 
           // 组装音标
           let phoneticStr = '';
-          if (data.uk_phonetic && data.us_phonetic) {
-            phoneticStr = `UK: [${data.uk_phonetic}]  US: [${data.us_phonetic}]`;
+          const nextUkPhonetic = data.uk_phonetic || '';
+          const nextUsPhonetic = data.us_phonetic || '';
+          if (nextUkPhonetic && nextUsPhonetic) {
+            phoneticStr = `UK: [${nextUkPhonetic}]  US: [${nextUsPhonetic}]`;
+          } else if (nextUkPhonetic) {
+            phoneticStr = `UK: [${nextUkPhonetic}]`;
+          } else if (nextUsPhonetic) {
+            phoneticStr = `US: [${nextUsPhonetic}]`;
           } else if (data.phonetic) {
             phoneticStr = `[${data.phonetic}]`;
           }
 
           // 组装释义
           const definitions = Array.isArray(data.definitions)
-            ? data.definitions.map((item: any) => item.definition).join('\n')
-            : '';
+            ? data.definitions
+                .map((item: any) => ({
+                  pos: typeof item.pos === 'string' ? item.pos : '',
+                  definition: typeof item.definition === 'string' ? item.definition : '',
+                }))
+                .filter((item: DictionaryDefinition) => item.definition.trim())
+            : [];
+          const definitionText = definitions.map((item: DictionaryDefinition) => item.definition).join('\n');
 
           setTranslation(data.translation || '暂无释义');
           setPhonetic(phoneticStr);
-          setDefinition(definitions);
+          setUkPhonetic(nextUkPhonetic);
+          setUsPhonetic(nextUsPhonetic);
+          setDefinition(definitionText);
+          setDictionaryDefinitions(definitions);
           setDictionaryError(data.error || '');
           setSpeechUrl(data.us_speech_url || data.uk_speech_url || data.speech_url || '');
+          setUkSpeechUrl(data.uk_speech_url || '');
+          setUsSpeechUrl(data.us_speech_url || '');
         } else {
           // 翻译模式：直接翻译
           const response = await translationAPI.translate({
             text: selectedText,
             target_lang: 'zh',
+            article_id: articleId,
+            context,
           });
           setTranslation(response.data.translation);
         }
@@ -96,22 +135,70 @@ export default function TranslationTooltip({
     if (selectedText) {
       fetchResult();
     }
-  }, [mode, selectedText]);
+  }, [articleId, context, mode, selectedText]);
 
-  const handleSpeak = () => {
-    if (speechUrl) {
-      new Audio(speechUrl).play().catch((error) => {
+  const getAccentTitle = (accent: Accent) => {
+    return accent === 'uk' ? '英音发音' : '美音发音';
+  };
+
+  const handleSpeak = (accent: Accent = 'us') => {
+    const accentSpeechUrl = accent === 'uk' ? ukSpeechUrl : usSpeechUrl;
+    const nextSpeechUrl = accentSpeechUrl || speechUrl;
+
+    if (nextSpeechUrl) {
+      const audio = new Audio(nextSpeechUrl);
+      audio.play().catch((error) => {
         console.error('Audio playback error:', error);
       });
-      return;
-    }
-
-    if ('speechSynthesis' in window) {
-      const utterance = new SpeechSynthesisUtterance(selectedText);
-      utterance.lang = 'en-US';
-      window.speechSynthesis.speak(utterance);
     }
   };
+
+  const hasAccentSpeech = Boolean(ukSpeechUrl || usSpeechUrl);
+  const parseDefinition = (text: string): DictionaryDefinition => {
+    const trimmed = text.trim();
+    const match = trimmed.match(/^([a-z]+\.?)\s+(.+)$/i);
+    return match
+      ? { pos: match[1], definition: match[2].trim() }
+      : { definition: trimmed };
+  };
+  const uniqueDefinitions = (items: DictionaryDefinition[]) => {
+    const seen = new Set<string>();
+    return items.filter((item) => {
+      const key = `${item.pos || ''}:${item.definition}`.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+  const translationLines = translation.split('\n').map((line) => line.trim()).filter(Boolean);
+  const definitionLines = uniqueDefinitions(
+    dictionaryDefinitions.length > 0
+      ? dictionaryDefinitions
+      : definition.split('\n').map((line) => line.trim()).filter(Boolean).map(parseDefinition)
+  );
+  const fallbackDefinitions = uniqueDefinitions(translationLines.map(parseDefinition));
+  const displayedDefinitions = definitionLines.length > 0 ? definitionLines : fallbackDefinitions;
+  const visibleDefinitions = displayedDefinitions.slice(0, 8);
+  const extraDefinitionCount = Math.max(displayedDefinitions.length - visibleDefinitions.length, 0);
+  const shouldShowTranslationText = mode !== 'dictionary' || displayedDefinitions.length === 0;
+  const showGenericSpeech = Boolean(mode !== 'dictionary' || (!hasAccentSpeech && speechUrl));
+
+  const renderSpeechButton = (accent: Accent, label?: string, compact = true) => (
+    <button
+      onClick={() => handleSpeak(accent)}
+      disabled={loading}
+      className={
+        compact
+          ? 'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-stone-500 transition-colors hover:bg-stone-200 hover:text-stone-950 disabled:opacity-50 dark:text-stone-300 dark:hover:bg-stone-700 dark:hover:text-white'
+          : 'inline-flex h-8 items-center gap-1.5 rounded-md bg-stone-100 px-2.5 text-xs font-medium text-stone-700 transition-colors hover:bg-stone-200 disabled:opacity-50 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700'
+      }
+      title={label ? `${label}发音` : getAccentTitle(accent)}
+      aria-label={label ? `${label}发音` : getAccentTitle(accent)}
+    >
+      <Volume2 className="h-4 w-4" />
+      {label && <span>{label}</span>}
+    </button>
+  );
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -180,43 +267,96 @@ export default function TranslationTooltip({
         top: `${position.y}px`,
       }}
     >
-      <div className="mb-2 flex items-start justify-between">
-        <div className="flex-1">
-          <div className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-400">
-            {selectedText}
-          </div>
-          {phonetic && (
-            <div className="mb-2 text-xs text-gray-500">{phonetic}</div>
-          )}
-          {currentVocabulary && (
-            <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-1 font-semibold text-emerald-500 dark:text-emerald-300">
-                <BookmarkCheck className="h-3 w-3" />
+      <div className="space-y-3">
+        <div>
+          <div className="mb-2.5 flex flex-wrap items-center gap-2">
+            <span className="text-lg font-semibold leading-none text-stone-950 dark:text-stone-50">
+              {selectedText}
+            </span>
+            {showGenericSpeech && (
+              renderSpeechButton('us', '发音', false)
+            )}
+            {currentVocabulary && (
+              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-teal-700/10 px-2 text-xs font-semibold text-teal-700 dark:bg-teal-300/10 dark:text-teal-200">
+                <BookmarkCheck className="h-3.5 w-3.5" />
                 已在生词本
               </span>
-              <span className="text-gray-500">
+            )}
+          </div>
+
+          {mode === 'dictionary' && (ukPhonetic || usPhonetic || phonetic) && (
+            <div className="flex flex-wrap items-center gap-2 text-sm text-stone-500 dark:text-stone-300">
+              {ukPhonetic && (
+                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2.5 dark:border-stone-700 dark:bg-stone-800/70">
+                  <span>UK: [{ukPhonetic}]</span>
+                  {ukSpeechUrl && renderSpeechButton('uk')}
+                </div>
+              )}
+              {usPhonetic && (
+                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2.5 dark:border-stone-700 dark:bg-stone-800/70">
+                  <span>US: [{usPhonetic}]</span>
+                  {usSpeechUrl && renderSpeechButton('us')}
+                </div>
+              )}
+              {!ukPhonetic && !usPhonetic && phonetic && (
+                <div className="inline-flex h-9 items-center gap-2 rounded-md border border-stone-200 bg-stone-50 px-2.5 dark:border-stone-700 dark:bg-stone-800/70">
+                  <span>{phonetic}</span>
+                  {renderSpeechButton('us')}
+                </div>
+              )}
+            </div>
+          )}
+          {mode === 'dictionary' && !ukPhonetic && !usPhonetic && !phonetic && hasAccentSpeech && (
+            <div className="flex flex-wrap items-center gap-2">
+              {renderSpeechButton('uk', '英音', false)}
+              {renderSpeechButton('us', '美音', false)}
+            </div>
+          )}
+          {currentVocabulary && (
+            <div className="mt-2.5 text-xs text-stone-500 dark:text-stone-400">
                 复习 {currentVocabulary.review_count} 次
                 {currentVocabulary.forgotten_count > 0
                   ? ` · 忘记 ${currentVocabulary.forgotten_count} 次`
                   : ''}
-              </span>
             </div>
           )}
+        </div>
+
+        <div>
           {loading ? (
-            <div className="flex items-center space-x-2 text-gray-500">
+            <div className="flex items-center space-x-2 rounded-md bg-stone-100/80 p-3 text-stone-500 dark:bg-stone-800/60 dark:text-stone-300">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span className="text-sm">{mode === 'dictionary' ? '查词中...' : '翻译中...'}</span>
             </div>
           ) : (
-            <div className="space-y-2">
-              <div className="text-gray-950 dark:text-white">{translation}</div>
-              {definition && (
-                <div className="whitespace-pre-line text-sm leading-6 text-gray-600 dark:text-gray-400">
-                  {definition}
+            <div className="space-y-2.5">
+              {shouldShowTranslationText && (
+                <div className="text-base leading-7 text-stone-950 dark:text-stone-50">{translation}</div>
+              )}
+              {visibleDefinitions.length > 0 && (
+                <div className="grid gap-1.5 text-sm leading-6">
+                  {visibleDefinitions.map((item, index) => (
+                    <div
+                      key={`${item.pos || 'def'}-${item.definition}-${index}`}
+                      className="flex gap-2 rounded-md bg-stone-100/70 px-2.5 py-1.5 text-stone-700 dark:bg-stone-800/70 dark:text-stone-200"
+                    >
+                      {item.pos && (
+                        <span className="min-w-10 shrink-0 font-medium text-teal-700 dark:text-teal-200">
+                          {item.pos}
+                        </span>
+                      )}
+                      <span className="min-w-0">{item.definition}</span>
+                    </div>
+                  ))}
+                  {extraDefinitionCount > 0 && (
+                    <div className="px-2.5 pt-0.5 text-xs text-stone-500 dark:text-stone-400">
+                      还有 {extraDefinitionCount} 条释义
+                    </div>
+                  )}
                 </div>
               )}
               {dictionaryError && (
-                <div className="text-xs leading-5 text-amber-600 dark:text-amber-300">
+                <div className="rounded-md bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-700 dark:text-amber-300">
                   {dictionaryError}
                 </div>
               )}
@@ -225,20 +365,11 @@ export default function TranslationTooltip({
         </div>
       </div>
 
-      <div className="mt-3 flex items-center space-x-2 border-t border-gray-200 pt-3 dark:border-gray-700">
-        <button
-          onClick={handleSpeak}
-          disabled={loading}
-          className="flex items-center space-x-1 rounded bg-gray-100 px-3 py-1.5 text-sm transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700"
-          title="发音"
-        >
-          <Volume2 className="w-3.5 h-3.5" />
-          <span>发音</span>
-        </button>
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-stone-200 pt-3 dark:border-stone-700">
         {onAskAI && (
           <button
             onClick={() => onAskAI(selectedText)}
-            className="flex items-center space-x-1 rounded bg-sky-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-sky-500"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-700 px-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-600"
             title="问 AI"
           >
             <Bot className="w-3.5 h-3.5" />
@@ -250,7 +381,7 @@ export default function TranslationTooltip({
             <button
               onClick={() => handleReviewVocabulary('forgot')}
               disabled={reviewing || loading}
-              className="flex items-center space-x-1 rounded bg-gray-100 px-3 py-1.5 text-sm transition-colors hover:bg-gray-200 disabled:opacity-50 dark:bg-gray-800 dark:hover:bg-gray-700"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-stone-100 px-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-200 disabled:opacity-50 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
               title="忘记"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -259,7 +390,7 @@ export default function TranslationTooltip({
             <button
               onClick={() => handleReviewVocabulary('hard')}
               disabled={reviewing || loading}
-              className="rounded bg-yellow-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-yellow-500 disabled:opacity-50"
+              className="inline-flex h-8 items-center rounded-md bg-amber-600 px-2.5 text-sm font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
               title="模糊"
             >
               模糊
@@ -267,7 +398,7 @@ export default function TranslationTooltip({
             <button
               onClick={() => handleReviewVocabulary('good')}
               disabled={reviewing || loading}
-              className="rounded bg-green-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-green-500 disabled:opacity-50"
+              className="inline-flex h-8 items-center rounded-md bg-teal-700 px-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
               title="记得"
             >
               记得
@@ -277,7 +408,7 @@ export default function TranslationTooltip({
           <button
             onClick={handleAddToVocabulary}
             disabled={adding || loading}
-            className="flex items-center space-x-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 rounded text-sm transition-colors disabled:opacity-50"
+            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-700 px-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
             title="添加到生词本"
           >
             {adding ? (

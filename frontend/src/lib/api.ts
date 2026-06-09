@@ -14,12 +14,17 @@ export function resolveAPIAssetURL(path: string) {
   return `${API_ORIGIN}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+export function isRemoteHTTPURL(path: string) {
+  return /^https?:\/\//i.test(path);
+}
+
 const api = axios.create({
   baseURL: API_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 });
+
+function postForm(url: string, data: FormData) {
+  return api.post(url, data);
+}
 
 // 请求拦截器 - 添加 token
 api.interceptors.request.use(
@@ -58,7 +63,7 @@ export const authAPI = {
   getProfile: () =>
     api.get('/profile'),
   uploadAvatar: (data: FormData) =>
-    api.post('/profile/avatar', data),
+    postForm('/profile/avatar', data),
 };
 
 // 文章 API
@@ -95,6 +100,16 @@ export const articleAPI = {
     }),
   getCompletion: (id: number) =>
     api.get(`/article-completions/${id}`),
+  getKnowledgeGraph: (id: number) =>
+    api.get(`/article-knowledge-graph/${id}`),
+  getStudyNote: (id: number) =>
+    api.get(`/article-notes/${id}`),
+  generateStudyNote: (id: number, force = false) =>
+    api.post(`/article-notes/${id}`, { force }),
+  getQuiz: (id: number) =>
+    api.get(`/article-quizzes/${id}`),
+  submitQuiz: (id: number, answers: number[]) =>
+    api.post(`/article-quizzes/${id}/submit`, { answers }),
 };
 
 // 分类 API
@@ -136,12 +151,12 @@ export const adminArticleAPI = {
 
 // 翻译 API
 export const translationAPI = {
-  translate: (data: { text: string; target_lang: string; source_lang?: string }) =>
+  translate: (data: { text: string; target_lang: string; source_lang?: string; article_id?: number; context?: string }) =>
     api.post('/translate', data),
-  lookupWord: (word: string) =>
-    api.get('/dictionary', { params: { word } }),
-  analyzeSentence: (text: string) =>
-    api.post('/sentences/analyze', { text }),
+  lookupWord: (word: string, params?: { article_id?: number; context?: string }) =>
+    api.get('/dictionary', { params: { word, ...params } }),
+  analyzeSentence: (text: string, data?: { article_id?: number; context?: string }) =>
+    api.post('/sentences/analyze', { text, ...data }),
 };
 
 export const ttsAPI = {
@@ -158,6 +173,10 @@ export const ttsAPI = {
 export const vocabularyAPI = {
   getVocabulary: (params?: { due?: boolean; article_id?: number; weak?: boolean }) =>
     api.get('/vocabulary', { params }),
+  getReviewExercises: (params?: { due?: boolean; weak?: boolean; limit?: number }) =>
+    api.get('/vocabulary/review-exercises', { params }),
+  getKnowledgeGraph: (id: number) =>
+    api.get(`/vocabulary/${id}/knowledge-graph`),
   addWord: (data: {
     word: string;
     article_id?: number;
@@ -171,6 +190,26 @@ export const vocabularyAPI = {
     api.patch(`/vocabulary/${id}/learned`),
   reviewWord: (id: number, rating: 'forgot' | 'hard' | 'good') =>
     api.post(`/vocabulary/${id}/review`, { rating }),
+  deleteWord: (id: number) =>
+    api.delete(`/vocabulary/${id}`),
+  submitAnswer: (id: number, data: { type: string; answer: string }) =>
+    api.post(`/vocabulary/${id}/review-answer`, data),
+};
+
+export const knowledgeGraphAPI = {
+  getOverview: () =>
+    api.get('/knowledge-graph/overview'),
+  refresh: () =>
+    api.post('/knowledge-graph/refresh'),
+  getGraph: (params?: {
+    focus_type?: string;
+    focus_id?: number;
+    focus_key?: string;
+    depth?: number;
+    limit?: number;
+    types?: string;
+    search?: string;
+  }) => api.get('/knowledge-graph', { params }),
 };
 
 // 订阅 API
@@ -202,11 +241,47 @@ export const historyAPI = {
 // 学习闭环 API
 export const studyAPI = {
   getToday: () => api.get('/study/today'),
+  getDiagnostics: () => api.get('/study/diagnostics'),
   updateGoal: (data: {
     daily_read_minutes: number;
     daily_review_words: number;
     daily_articles: number;
   }) => api.put('/study/goal', data),
+};
+
+export const videoLessonAPI = {
+  list: (params?: { page?: number; page_size?: number; status?: string; search?: string }) =>
+    api.get('/video-lessons', { params }),
+  create: (data: FormData) =>
+    postForm('/video-lessons', data),
+  get: (id: number) =>
+    api.get(`/video-lessons/${id}`),
+  remove: (id: number) =>
+    api.delete(`/video-lessons/${id}`),
+  process: (id: number) =>
+    api.post(`/video-lessons/${id}/process`),
+  updateProgress: (id: number, data: { last_position_seconds: number; completed?: boolean; watched_seconds?: number }) =>
+    api.patch(`/video-lessons/${id}/progress`, data),
+  getSubtitles: (id: number) =>
+    api.get(`/video-lessons/${id}/subtitles`),
+  createSubtitle: (id: number, data: {
+    start_seconds: number;
+    end_seconds: number;
+    text: string;
+    translation?: string;
+  }) => api.post(`/video-lessons/${id}/subtitles`, data),
+  updateSubtitle: (id: number, subtitleId: number, data: {
+    start_seconds?: number;
+    end_seconds?: number;
+    text?: string;
+    translation?: string;
+  }) => api.put(`/video-lessons/${id}/subtitles/${subtitleId}`, data),
+  deleteSubtitle: (id: number, subtitleId: number) =>
+    api.delete(`/video-lessons/${id}/subtitles/${subtitleId}`),
+  reorderSubtitles: (id: number) =>
+    api.post(`/video-lessons/${id}/subtitles/reorder`),
+  importSubtitles: (id: number, data: FormData) =>
+    postForm(`/video-lessons/${id}/subtitles/import`, data),
 };
 
 export default api;

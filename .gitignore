@@ -7,3 +7,5 @@ frontend/tsconfig.tsbuildinfo
 backend/gugudu-backend
 backend/storage/
 .omo/
+local-asr/funasr/.venv/
+local-asr/funasr/models/

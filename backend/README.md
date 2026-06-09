@@ -104,6 +104,8 @@ go run main.go
 - `DELETE /api/subscriptions/:article_id` - 取消订阅
 - `GET /api/history` - 获取阅读历史
 - `POST /api/articles/:id/progress` - 更新阅读进度
+- `GET /api/article-quizzes/:id` - 获取文章读后测验
+- `POST /api/article-quizzes/:id/submit` - 提交文章读后测验
 
 ### 生词本（需认证）
 

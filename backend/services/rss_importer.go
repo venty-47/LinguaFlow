@@ -414,7 +414,11 @@ func (i *RSSImporter) buildArticle(ctx context.Context, feed config.RSSFeedConfi
 		article.Content = article.Summary
 	}
 	if article.CoverImage != "" {
-		article.CoverImage = i.downloadCoverImage(ctx, article.CoverImage)
+		if localCover := i.downloadCoverImage(ctx, article.CoverImage); localCover != "" {
+			article.CoverImage = localCover
+		} else {
+			article.CoverImage = ""
+		}
 	}
 
 	return article, nil
@@ -426,11 +430,7 @@ func (i *RSSImporter) saveArticle(feed config.RSSFeedConfig, item feedArticle) (
 		return false, false, err
 	}
 
-	wordCount := countWords(item.Content)
-	readingTime := (wordCount + 179) / 180
-	if readingTime < 1 {
-		readingTime = 1
-	}
+	analysis := AnalyzeArticleText(item.Title, item.Summary, item.Content)
 	source := firstNonEmpty(feed.Source, feed.Name)
 	slug := makeArticleSlug(item.Title, item.SourceURL)
 
@@ -446,9 +446,11 @@ func (i *RSSImporter) saveArticle(feed config.RSSFeedConfig, item feedArticle) (
 		SourceURL:       item.SourceURL,
 		Author:          item.Author,
 		PublishedAt:     item.PublishedAt,
-		DifficultyLevel: difficultyForWordCount(wordCount),
-		WordCount:       wordCount,
-		ReadingTime:     readingTime,
+		DifficultyLevel: analysis.DifficultyLevel,
+		WordCount:       analysis.WordCount,
+		ReadingTime:     analysis.ReadingTime,
+		Keywords:        KeywordsToString(analysis.Keywords),
+		CEFRLevel:       analysis.CEFRLevel,
 		Status:          "published",
 	}
 
@@ -474,9 +476,11 @@ func (i *RSSImporter) saveArticle(feed config.RSSFeedConfig, item feedArticle) (
 		"difficulty_level": article.DifficultyLevel,
 		"word_count":       article.WordCount,
 		"reading_time":     article.ReadingTime,
+		"keywords":         article.Keywords,
+		"cefr_level":       article.CEFRLevel,
 		"status":           article.Status,
 	}
-	if article.CoverImage != "" {
+	if shouldUpdateRSSCoverImage(article.CoverImage, existing.CoverImage) {
 		updates["cover_image"] = article.CoverImage
 	}
 
@@ -594,6 +598,18 @@ func extensionForImage(contentType, sourcePath string) string {
 	default:
 		return ""
 	}
+}
+
+func shouldUpdateRSSCoverImage(nextCover, existingCover string) bool {
+	return nextCover != "" || isRemoteHTTPURL(existingCover)
+}
+
+func isRemoteHTTPURL(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	return parsed.IsAbs() && (parsed.Scheme == "http" || parsed.Scheme == "https")
 }
 
 func parseFeed(data []byte) (parsedFeed, error) {
@@ -995,17 +1011,6 @@ func parseFeedTime(raw string, fallback time.Time) time.Time {
 
 func countWords(text string) int {
 	return len(regexp.MustCompile(`[A-Za-z]+(?:['-][A-Za-z]+)?`).FindAllString(text, -1))
-}
-
-func difficultyForWordCount(wordCount int) string {
-	switch {
-	case wordCount <= 700:
-		return "easy"
-	case wordCount <= 1400:
-		return "medium"
-	default:
-		return "hard"
-	}
 }
 
 func makeArticleSlug(title, sourceURL string) string {

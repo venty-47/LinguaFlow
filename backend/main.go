@@ -68,6 +68,10 @@ func main() {
 		firstNonEmpty(cfg.AO3.Proxy, cfg.RSS.Proxy),
 		firstPositive(cfg.AO3.RequestTimeoutSeconds, cfg.RSS.RequestTimeoutSeconds),
 	)
+	handlers.InitVideoLearningService(
+		cfg.Video,
+		firstNonEmpty(cfg.Video.TranscriptionAPIKey, cfg.AI.APIKey, cfg.TTS.APIKey),
+	)
 
 	// 创建 Gin 路由
 	r := gin.Default()
@@ -118,8 +122,8 @@ func main() {
 		}
 
 		// 翻译服务（无需登录）
-		api.POST("/translate", handlers.Translate)
-		api.GET("/dictionary", handlers.LookupWord)
+		api.POST("/translate", middleware.OptionalAuth(), handlers.Translate)
+		api.GET("/dictionary", middleware.OptionalAuth(), handlers.LookupWord)
 		api.GET("/tts/audio/:filename", handlers.GetSpeechAudio)
 
 		// RSS 导入（导入 token 保护，供本地脚本或定时任务调用）
@@ -166,19 +170,51 @@ func main() {
 			protected.GET("/history", handlers.GetReadHistory)
 			protected.POST("/articles/:id/progress", handlers.UpdateReadProgress)
 			protected.POST("/articles/:id/assistant", middleware.PremiumRequired(database.DB), handlers.DiscussArticleWithAssistant)
+			protected.GET("/article-quizzes/:id", handlers.GetArticleQuiz)
+			protected.POST("/article-quizzes/:id/submit", handlers.SubmitArticleQuiz)
 			protected.GET("/article-completions/:id", handlers.GetArticleCompletion)
+			protected.GET("/article-knowledge-graph/:id", handlers.GetArticleKnowledgeGraph)
+			protected.GET("/article-notes/:id", handlers.GetArticleStudyNote)
+			protected.POST("/article-notes/:id", handlers.GenerateArticleStudyNote)
 			protected.POST("/sentences/analyze", middleware.PremiumRequired(database.DB), handlers.AnalyzeSentence)
 			protected.POST("/tts", handlers.GenerateSpeech)
 
 			// 每日学习
 			protected.GET("/study/today", handlers.GetStudyToday)
+			protected.GET("/study/diagnostics", handlers.GetStudyDiagnostics)
 			protected.PUT("/study/goal", handlers.UpdateStudyGoal)
+
+			// 视频学习
+			videos := protected.Group("/video-lessons")
+			{
+				videos.GET("", handlers.ListVideoLessons)
+				videos.POST("", handlers.CreateVideoLesson)
+				videos.GET("/:id", handlers.GetVideoLesson)
+				videos.DELETE("/:id", handlers.DeleteVideoLesson)
+				videos.POST("/:id/process", handlers.ProcessVideoLesson)
+				videos.PATCH("/:id/progress", handlers.UpdateVideoLessonProgress)
+				videos.GET("/:id/subtitles", handlers.ListVideoSubtitles)
+				videos.POST("/:id/subtitles", handlers.CreateVideoSubtitle)
+				videos.POST("/:id/subtitles/import", handlers.ImportVideoSubtitles)
+				videos.POST("/:id/subtitles/reorder", handlers.ReorderVideoSubtitles)
+				videos.PUT("/:id/subtitles/:subtitle_id", handlers.UpdateVideoSubtitle)
+				videos.DELETE("/:id/subtitles/:subtitle_id", handlers.DeleteVideoSubtitle)
+			}
+
+			// 学习知识图谱
+			protected.GET("/knowledge-graph/overview", handlers.GetKnowledgeGraphOverview)
+			protected.POST("/knowledge-graph/refresh", handlers.RefreshKnowledgeGraph)
+			protected.GET("/knowledge-graph", handlers.GetKnowledgeGraph)
 
 			// 生词本
 			protected.GET("/vocabulary", handlers.GetVocabulary)
+			protected.GET("/vocabulary/review-exercises", handlers.GetVocabularyReviewExercises)
+			protected.GET("/vocabulary/:id/knowledge-graph", handlers.GetVocabularyKnowledgeGraph)
 			protected.POST("/vocabulary", handlers.AddToVocabulary)
+			protected.DELETE("/vocabulary/:id", handlers.DeleteVocabulary)
 			protected.PATCH("/vocabulary/:id/learned", handlers.MarkWordLearned)
 			protected.POST("/vocabulary/:id/review", handlers.ReviewVocabulary)
+			protected.POST("/vocabulary/:id/review-answer", handlers.SubmitVocabularyReviewAnswer)
 		}
 	}
 

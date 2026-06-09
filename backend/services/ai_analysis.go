@@ -31,6 +31,14 @@ type ArticleAssistantResult struct {
 	Provider string                  `json:"provider"`
 }
 
+type AIStudyNoteInput struct {
+	ArticleTitle   string
+	ArticleSummary string
+	ArticleContent string
+	EventsJSON     string
+	VocabularyJSON string
+}
+
 type AIAnalysisService struct {
 	BaseURL string
 	APIKey  string
@@ -331,6 +339,102 @@ func (s *AIAnalysisService) DiscussArticleStream(title, summary, content string,
 	}
 
 	return nil
+}
+
+func (s *AIAnalysisService) GenerateStudyNote(input AIStudyNoteInput) (*ArticleStudyNoteResponse, error) {
+	if !s.IsConfigured() {
+		return nil, fmt.Errorf("AI 精读笔记服务未配置")
+	}
+
+	payload := chatCompletionRequest{
+		Model: s.Model,
+		Messages: []chatMessage{
+			{
+				Role: "system",
+				Content: strings.TrimSpace(`你是一个面向中文英语学习者的精读笔记整理助手。
+请只返回 JSON，不要使用 Markdown，不要输出额外解释。
+JSON 字段必须是：
+summary: 字符串，中文，概括文章内容和本次学习行为
+keywords: 字符串数组，6-12 个关键词或表达
+difficult_sentences: 数组，每项包含 text, translation, reason, tips。tips 是字符串数组
+grammar_points: 数组，每项包含 title, description, examples。examples 是字符串数组
+expression_replacements: 数组，每项包含 original, alternative, note
+review_plan: 字符串数组，3-5 条复习动作
+要求：
+1. 优先使用用户查过、翻译过、精读过、问过 AI 的内容。
+2. 不编造文章没有出现的细节。
+3. 输出适合读后复习，简洁但可执行。`),
+			},
+			{
+				Role: "user",
+				Content: fmt.Sprintf(strings.TrimSpace(`文章标题：
+%s
+
+文章摘要：
+%s
+
+文章正文节选：
+%s
+
+用户学习事件 JSON：
+%s
+
+本篇生词 JSON：
+%s`), input.ArticleTitle, input.ArticleSummary, input.ArticleContent, input.EventsJSON, input.VocabularyJSON),
+			},
+		},
+		Temperature: temperatureForModel(s.Model, 0.25),
+		MaxTokens:   1800,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("构建 AI 精读笔记请求失败: %w", err)
+	}
+
+	endpoint := s.BaseURL + "/chat/completions"
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("构建 AI 精读笔记请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+s.APIKey)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("AI 精读笔记请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取 AI 精读笔记响应失败: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("AI 精读笔记 HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var completion chatCompletionResponse
+	if err := json.Unmarshal(respBody, &completion); err != nil {
+		return nil, fmt.Errorf("解析 AI 精读笔记响应失败: %w", err)
+	}
+	if completion.Error != nil {
+		return nil, fmt.Errorf("AI 精读笔记错误: %s", completion.Error.Message)
+	}
+	if len(completion.Choices) == 0 || strings.TrimSpace(completion.Choices[0].Message.Content) == "" {
+		return nil, fmt.Errorf("AI 精读笔记结果为空")
+	}
+
+	content := cleanJSONContent(completion.Choices[0].Message.Content)
+	var note ArticleStudyNoteResponse
+	if err := json.Unmarshal([]byte(content), &note); err != nil {
+		return nil, fmt.Errorf("解析 AI 精读笔记 JSON 失败: %w", err)
+	}
+	if strings.TrimSpace(note.Summary) == "" {
+		return nil, fmt.Errorf("AI 精读笔记缺少摘要")
+	}
+	note.Provider = "ai"
+	return &note, nil
 }
 
 func buildArticleAssistantMessages(title, summary, content string, history []ArticleAssistantMessage) []chatMessage {

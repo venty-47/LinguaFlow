@@ -187,6 +187,48 @@ func TestDownloadCoverImageRejectsNonImages(t *testing.T) {
 	}
 }
 
+func TestShouldUpdateRSSCoverImage(t *testing.T) {
+	cases := []struct {
+		name          string
+		nextCover     string
+		existingCover string
+		expected      bool
+	}{
+		{
+			name:          "stores downloaded local cover",
+			nextCover:     "/storage/rss-covers/cover.jpg",
+			existingCover: "",
+			expected:      true,
+		},
+		{
+			name:          "clears stale remote cover after failed download",
+			nextCover:     "",
+			existingCover: "https://gdb.voanews.com/example.jpg",
+			expected:      true,
+		},
+		{
+			name:          "keeps existing local cover when feed has no replacement",
+			nextCover:     "",
+			existingCover: "/storage/rss-covers/cover.jpg",
+			expected:      false,
+		},
+		{
+			name:          "keeps empty cover empty",
+			nextCover:     "",
+			existingCover: "",
+			expected:      false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldUpdateRSSCoverImage(tc.nextCover, tc.existingCover); got != tc.expected {
+				t.Fatalf("shouldUpdateRSSCoverImage(%q, %q) = %v, want %v", tc.nextCover, tc.existingCover, got, tc.expected)
+			}
+		})
+	}
+}
+
 func TestExtensionForImage(t *testing.T) {
 	cases := []struct {
 		contentType string

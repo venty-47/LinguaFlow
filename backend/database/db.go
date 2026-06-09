@@ -35,6 +35,11 @@ func InitDB(cfg *config.Config) error {
 		&models.User{},
 		&models.Category{},
 		&models.Article{},
+		&models.ArticleQuiz{},
+		&models.ArticleQuizQuestion{},
+		&models.ArticleQuizAttempt{},
+		&models.ArticleStudyEvent{},
+		&models.ArticleStudyNote{},
 		&models.Subscription{},
 		&models.ReadHistory{},
 		&models.Vocabulary{},
@@ -44,6 +49,12 @@ func InitDB(cfg *config.Config) error {
 		&models.MembershipBenefit{},
 		&models.StudyGoal{},
 		&models.StudyRecord{},
+		&models.KnowledgeNode{},
+		&models.KnowledgeEdge{},
+		&models.UserKnowledgeState{},
+		&models.VideoLesson{},
+		&models.VideoSubtitle{},
+		&models.VideoProcessingJob{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}

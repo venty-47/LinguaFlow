@@ -30,12 +30,14 @@ type User struct {
 	WordsLearned  int `gorm:"default:0" json:"words_learned"`   // 已学单词数
 
 	// 关联
-	Subscriptions []Subscription `gorm:"foreignKey:UserID" json:"subscriptions,omitempty"`
-	ReadHistory   []ReadHistory  `gorm:"foreignKey:UserID" json:"read_history,omitempty"`
-	Vocabulary    []Vocabulary   `gorm:"foreignKey:UserID" json:"vocabulary,omitempty"`
-	Orders        []Order        `gorm:"foreignKey:UserID" json:"orders,omitempty"`
-	StudyGoal     *StudyGoal     `gorm:"foreignKey:UserID" json:"study_goal,omitempty"`
-	StudyRecords  []StudyRecord  `gorm:"foreignKey:UserID" json:"study_records,omitempty"`
+	Subscriptions  []Subscription  `gorm:"foreignKey:UserID" json:"subscriptions,omitempty"`
+	ReadHistory    []ReadHistory   `gorm:"foreignKey:UserID" json:"read_history,omitempty"`
+	Vocabulary     []Vocabulary    `gorm:"foreignKey:UserID" json:"vocabulary,omitempty"`
+	Orders         []Order         `gorm:"foreignKey:UserID" json:"orders,omitempty"`
+	StudyGoal      *StudyGoal      `gorm:"foreignKey:UserID" json:"study_goal,omitempty"`
+	StudyRecords   []StudyRecord   `gorm:"foreignKey:UserID" json:"study_records,omitempty"`
+	KnowledgeNodes []KnowledgeNode `gorm:"foreignKey:UserID" json:"knowledge_nodes,omitempty"`
+	VideoLessons   []VideoLesson   `gorm:"foreignKey:UserID" json:"video_lessons,omitempty"`
 }
 
 // Category 分类
@@ -86,6 +88,8 @@ type Article struct {
 	DifficultyLevel string `gorm:"size:20;default:'medium'" json:"difficulty_level"` // easy, medium, hard
 	WordCount       int    `gorm:"default:0" json:"word_count"`
 	ReadingTime     int    `gorm:"default:0" json:"reading_time"` // 预估阅读时间（分钟）
+	Keywords        string `gorm:"size:500" json:"keywords"`      // 逗号分隔
+	CEFRLevel       string `gorm:"size:5" json:"cefr_level"`      // A1, A2, B1, B2, C1, C2
 	ViewCount       int    `gorm:"default:0" json:"view_count"`
 
 	// 状态
@@ -94,6 +98,107 @@ type Article struct {
 
 	// 关联
 	ReadHistory []ReadHistory `gorm:"foreignKey:ArticleID" json:"read_history,omitempty"`
+	Quiz        *ArticleQuiz  `gorm:"foreignKey:ArticleID" json:"quiz,omitempty"`
+}
+
+// ArticleQuiz 文章读后测验
+type ArticleQuiz struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	ArticleID uint   `gorm:"not null;uniqueIndex" json:"article_id"`
+	Title     string `gorm:"size:500;not null" json:"title"`
+
+	Article   Article               `gorm:"foreignKey:ArticleID" json:"article,omitempty"`
+	Questions []ArticleQuizQuestion `gorm:"foreignKey:QuizID" json:"questions,omitempty"`
+	Attempts  []ArticleQuizAttempt  `gorm:"foreignKey:QuizID" json:"attempts,omitempty"`
+}
+
+// ArticleQuizQuestion 文章测验题目
+type ArticleQuizQuestion struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	QuizID       uint   `gorm:"not null;index" json:"quiz_id"`
+	SortOrder    int    `gorm:"default:0" json:"sort_order"`
+	QuestionType string `gorm:"size:30;default:'single_choice'" json:"question_type"`
+	Prompt       string `gorm:"type:text;not null" json:"prompt"`
+	Options      string `gorm:"type:text;not null" json:"options"` // JSON 字符串数组
+	CorrectIndex int    `gorm:"not null" json:"-"`
+	Explanation  string `gorm:"type:text" json:"explanation"`
+
+	Quiz ArticleQuiz `gorm:"foreignKey:QuizID" json:"quiz,omitempty"`
+}
+
+// ArticleQuizAttempt 用户读后测验提交记录
+type ArticleQuizAttempt struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID      uint      `gorm:"not null;index" json:"user_id"`
+	QuizID      uint      `gorm:"not null;index" json:"quiz_id"`
+	Answers     string    `gorm:"type:text;not null" json:"answers"` // JSON 数字数组
+	Score       int       `gorm:"default:0" json:"score"`
+	Total       int       `gorm:"default:0" json:"total"`
+	Percentage  int       `gorm:"default:0" json:"percentage"`
+	CompletedAt time.Time `json:"completed_at"`
+
+	User User        `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Quiz ArticleQuiz `gorm:"foreignKey:QuizID" json:"quiz,omitempty"`
+}
+
+// ArticleStudyEvent 用户阅读中的学习行为事件
+type ArticleStudyEvent struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID    uint   `gorm:"not null;index:idx_user_article_event,priority:1;uniqueIndex:idx_study_event_dedupe,priority:1" json:"user_id"`
+	ArticleID uint   `gorm:"not null;index:idx_user_article_event,priority:2;uniqueIndex:idx_study_event_dedupe,priority:2" json:"article_id"`
+	EventType string `gorm:"size:40;not null;index:idx_user_article_event,priority:3;uniqueIndex:idx_study_event_dedupe,priority:3" json:"event_type"`
+
+	SourceText  string `gorm:"type:text;not null" json:"source_text"`
+	ResultText  string `gorm:"type:text" json:"result_text"`
+	Context     string `gorm:"type:text" json:"context"`
+	Metadata    string `gorm:"type:text" json:"metadata"`
+	SourceHash  string `gorm:"size:64;not null;uniqueIndex:idx_study_event_dedupe,priority:4" json:"source_hash"`
+	ContextHash string `gorm:"size:64;not null;uniqueIndex:idx_study_event_dedupe,priority:5" json:"context_hash"`
+
+	User    User    `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Article Article `gorm:"foreignKey:ArticleID" json:"article,omitempty"`
+}
+
+// ArticleStudyNote 用户文章精读笔记
+type ArticleStudyNote struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID    uint `gorm:"not null;uniqueIndex:idx_user_article_note" json:"user_id"`
+	ArticleID uint `gorm:"not null;uniqueIndex:idx_user_article_note" json:"article_id"`
+
+	Title                  string     `gorm:"size:500;not null" json:"title"`
+	Summary                string     `gorm:"type:text" json:"summary"`
+	Keywords               string     `gorm:"type:text" json:"keywords"` // JSON 字符串数组
+	DifficultSentences     string     `gorm:"type:text" json:"difficult_sentences"`
+	GrammarPoints          string     `gorm:"type:text" json:"grammar_points"`
+	ExpressionReplacements string     `gorm:"type:text" json:"expression_replacements"`
+	ReviewPlan             string     `gorm:"type:text" json:"review_plan"`  // JSON 字符串数组
+	SourceStats            string     `gorm:"type:text" json:"source_stats"` // JSON 对象
+	Provider               string     `gorm:"size:30;default:'rules'" json:"provider"`
+	GeneratedAt            time.Time  `json:"generated_at"`
+	RefreshedAt            *time.Time `json:"refreshed_at"`
+
+	User    User    `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Article Article `gorm:"foreignKey:ArticleID" json:"article,omitempty"`
 }
 
 // Subscription 用户订阅（我的订阅）
@@ -192,6 +297,142 @@ type StudyRecord struct {
 	LastActivityAt    time.Time `json:"last_activity_at"`
 
 	User *User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
+
+// KnowledgeNode 学习知识图谱节点
+type KnowledgeNode struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID      uint   `gorm:"not null;uniqueIndex:idx_user_knowledge_node_key;index" json:"user_id"`
+	NodeKey     string `gorm:"size:180;not null;uniqueIndex:idx_user_knowledge_node_key" json:"node_key"`
+	Type        string `gorm:"size:30;not null;index" json:"type"`
+	Label       string `gorm:"size:500;not null" json:"label"`
+	Description string `gorm:"type:text" json:"description"`
+	Weight      int    `gorm:"default:50;index" json:"weight"`
+	Metadata    string `gorm:"type:text" json:"metadata"` // JSON 对象
+
+	SourceVocabularyID *uint       `gorm:"index" json:"source_vocabulary_id"`
+	SourceArticleID    *uint       `gorm:"index" json:"source_article_id"`
+	User               User        `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	SourceVocabulary   *Vocabulary `gorm:"foreignKey:SourceVocabularyID" json:"source_vocabulary,omitempty"`
+	SourceArticle      *Article    `gorm:"foreignKey:SourceArticleID" json:"source_article,omitempty"`
+}
+
+// KnowledgeEdge 学习知识图谱关系
+type KnowledgeEdge struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID       uint   `gorm:"not null;uniqueIndex:idx_user_knowledge_edge;index" json:"user_id"`
+	SourceNodeID uint   `gorm:"not null;uniqueIndex:idx_user_knowledge_edge;index" json:"source_node_id"`
+	TargetNodeID uint   `gorm:"not null;uniqueIndex:idx_user_knowledge_edge;index" json:"target_node_id"`
+	Relation     string `gorm:"size:50;not null;uniqueIndex:idx_user_knowledge_edge" json:"relation"`
+	Label        string `gorm:"size:100" json:"label"`
+	Weight       int    `gorm:"default:50;index" json:"weight"`
+	Metadata     string `gorm:"type:text" json:"metadata"` // JSON 对象
+
+	User       User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	SourceNode KnowledgeNode `gorm:"foreignKey:SourceNodeID" json:"source_node,omitempty"`
+	TargetNode KnowledgeNode `gorm:"foreignKey:TargetNodeID" json:"target_node,omitempty"`
+}
+
+// UserKnowledgeState 用户对知识节点的掌握状态
+type UserKnowledgeState struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID       uint       `gorm:"not null;uniqueIndex:idx_user_knowledge_state;index" json:"user_id"`
+	NodeID       uint       `gorm:"not null;uniqueIndex:idx_user_knowledge_state;index" json:"node_id"`
+	Familiarity  int        `gorm:"default:30;index" json:"familiarity"`
+	ReviewCount  int        `gorm:"default:0" json:"review_count"`
+	MistakeCount int        `gorm:"default:0;index" json:"mistake_count"`
+	LastSeenAt   *time.Time `json:"last_seen_at"`
+	NextReviewAt *time.Time `gorm:"index" json:"next_review_at"`
+	Source       string     `gorm:"size:50" json:"source"`
+
+	User User          `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Node KnowledgeNode `gorm:"foreignKey:NodeID" json:"node,omitempty"`
+}
+
+// VideoLesson 用户视频学习资料
+type VideoLesson struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID uint `gorm:"not null;index:idx_user_video_created,priority:1;index:idx_user_video_status,priority:1" json:"user_id"`
+
+	Title       string `gorm:"size:300;not null" json:"title"`
+	Description string `gorm:"type:text" json:"description"`
+	Source      string `gorm:"size:100" json:"source"`
+	SourceURL   string `gorm:"size:1000" json:"source_url"`
+
+	OriginalFilename string `gorm:"size:500" json:"original_filename"`
+	VideoPath        string `gorm:"size:1000;not null" json:"video_path"`
+	AudioPath        string `gorm:"size:1000" json:"audio_path"`
+	TranscriptPath   string `gorm:"size:1000" json:"transcript_path"`
+
+	DurationSeconds float64 `gorm:"default:0" json:"duration_seconds"`
+	FileSizeBytes   int64   `gorm:"default:0" json:"file_size_bytes"`
+	MimeType        string  `gorm:"size:100" json:"mime_type"`
+
+	Language string `gorm:"size:20;default:'en'" json:"language"`
+	Status   string `gorm:"size:30;default:'uploaded';index;index:idx_user_video_status,priority:2" json:"status"`
+	Progress int    `gorm:"default:0" json:"progress"`
+	Error    string `gorm:"type:text" json:"error"`
+
+	LastPositionSeconds float64    `gorm:"default:0" json:"last_position_seconds"`
+	CompletedAt         *time.Time `json:"completed_at"`
+
+	User      User                 `gorm:"foreignKey:UserID" json:"user,omitempty"`
+	Subtitles []VideoSubtitle      `gorm:"foreignKey:VideoLessonID" json:"subtitles,omitempty"`
+	Jobs      []VideoProcessingJob `gorm:"foreignKey:VideoLessonID" json:"jobs,omitempty"`
+}
+
+// VideoSubtitle 视频字幕句子
+type VideoSubtitle struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	VideoLessonID uint `gorm:"not null;index:idx_video_subtitle_order,priority:1;index" json:"video_lesson_id"`
+	SortOrder     int  `gorm:"not null;index:idx_video_subtitle_order,priority:2" json:"sort_order"`
+
+	StartSeconds float64 `gorm:"not null;index" json:"start_seconds"`
+	EndSeconds   float64 `gorm:"not null" json:"end_seconds"`
+	Text         string  `gorm:"type:text;not null" json:"text"`
+	Translation  string  `gorm:"type:text" json:"translation"`
+
+	Confidence float64 `gorm:"default:0" json:"confidence"`
+	Source     string  `gorm:"size:30;default:'auto'" json:"source"`
+
+	VideoLesson VideoLesson `gorm:"foreignKey:VideoLessonID" json:"video_lesson,omitempty"`
+}
+
+// VideoProcessingJob 视频异步处理任务
+type VideoProcessingJob struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	VideoLessonID uint       `gorm:"not null;index" json:"video_lesson_id"`
+	Status        string     `gorm:"size:30;default:'queued';index" json:"status"`
+	Attempts      int        `gorm:"default:0" json:"attempts"`
+	LastError     string     `gorm:"type:text" json:"last_error"`
+	StartedAt     *time.Time `json:"started_at"`
+	FinishedAt    *time.Time `json:"finished_at"`
+
+	VideoLesson VideoLesson `gorm:"foreignKey:VideoLessonID" json:"video_lesson,omitempty"`
 }
 
 // TranslationCache 翻译缓存

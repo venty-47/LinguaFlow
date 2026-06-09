@@ -193,7 +193,8 @@ func (s *BaiduDictionaryService) LookupWord(word string) (*DictionaryResult, err
 		Word:        item.Src,
 		Translation: item.Dst,
 		SpeechURL:   item.SrcTTS,
-		USSpeechURL: item.SrcTTS,
+		UKSpeechURL: DictionaryVoiceURL(word, "1"),
+		USSpeechURL: DictionaryVoiceURL(word, "2"),
 		Definitions: make([]DefinitionItem, 0),
 		WebMeanings: make([]WebMeaning, 0),
 	}

@@ -296,11 +296,15 @@ func (s *YoudaoDictionaryService) truncate(text string) string {
 	return string(runes[:10]) + strconv.Itoa(length) + string(runes[length-10:])
 }
 
-func (s *YoudaoDictionaryService) voiceURL(word, voiceType string) string {
+func DictionaryVoiceURL(word, voiceType string) string {
 	params := url.Values{}
 	params.Set("audio", word)
 	params.Set("type", voiceType)
 	return "https://dict.youdao.com/dictvoice?" + params.Encode()
+}
+
+func (s *YoudaoDictionaryService) voiceURL(word, voiceType string) string {
+	return DictionaryVoiceURL(word, voiceType)
 }
 
 func stringValue(value interface{}) string {

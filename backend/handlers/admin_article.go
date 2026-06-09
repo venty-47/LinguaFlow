@@ -6,6 +6,7 @@ import (
 	"errors"
 	"gugudu-backend/database"
 	"gugudu-backend/models"
+	"gugudu-backend/services"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -230,10 +231,6 @@ func buildAdminArticle(req adminArticleRequest, article models.Article) (models.
 	if status == "" {
 		status = "draft"
 	}
-	difficulty := normalizeDifficulty(req.DifficultyLevel)
-	if difficulty == "" {
-		difficulty = adminDifficultyForWordCount(adminCountWords(req.Content))
-	}
 	publishedAt, err := parseAdminPublishedAt(req.PublishedAt)
 	if err != nil {
 		return article, err
@@ -258,16 +255,20 @@ func buildAdminArticle(req adminArticleRequest, article models.Article) (models.
 	article.PublishedAt = publishedAt
 	article.Status = status
 	article.IsFeatured = req.IsFeatured
-	article.WordCount = adminCountWords(article.Content)
-	article.ReadingTime = (article.WordCount + 179) / 180
-	if article.ReadingTime < 1 {
-		article.ReadingTime = 1
-	}
-	article.DifficultyLevel = difficulty
 
 	if article.Title == "" || article.Content == "" {
 		return article, errors.New("title and content are required")
 	}
+
+	analysis := services.AnalyzeArticleText(article.Title, article.Summary, article.Content)
+	article.WordCount = analysis.WordCount
+	article.ReadingTime = analysis.ReadingTime
+	article.DifficultyLevel = analysis.DifficultyLevel
+	if manualDifficulty := services.NormalizeDifficultyLevel(req.DifficultyLevel); manualDifficulty != "" {
+		article.DifficultyLevel = manualDifficulty
+	}
+	article.Keywords = services.KeywordsToString(analysis.Keywords)
+	article.CEFRLevel = analysis.CEFRLevel
 
 	var category models.Category
 	if err := database.DB.First(&category, article.CategoryID).Error; err != nil {
@@ -309,17 +310,6 @@ func normalizeArticleStatus(status string) string {
 	}
 }
 
-func normalizeDifficulty(difficulty string) string {
-	switch strings.ToLower(strings.TrimSpace(difficulty)) {
-	case "", "auto":
-		return ""
-	case "easy", "medium", "hard":
-		return strings.ToLower(strings.TrimSpace(difficulty))
-	default:
-		return ""
-	}
-}
-
 func parseAdminPublishedAt(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -339,21 +329,6 @@ func positiveInt(value string, fallback int) int {
 		return fallback
 	}
 	return number
-}
-
-func adminCountWords(text string) int {
-	return len(regexp.MustCompile(`[A-Za-z]+(?:['-][A-Za-z]+)?`).FindAllString(text, -1))
-}
-
-func adminDifficultyForWordCount(wordCount int) string {
-	switch {
-	case wordCount <= 700:
-		return "easy"
-	case wordCount <= 1400:
-		return "medium"
-	default:
-		return "hard"
-	}
 }
 
 func adminArticleSlug(title, sourceURL string) string {

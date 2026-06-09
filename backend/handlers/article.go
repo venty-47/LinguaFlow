@@ -2,17 +2,22 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"gugudu-backend/database"
 	"gugudu-backend/models"
 	"gugudu-backend/services"
+	"math"
+	"math/rand"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 var aiAnalysisService *services.AIAnalysisService
@@ -163,6 +168,12 @@ func UpdateReadProgress(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if req.ReadTime < 0 {
+		req.ReadTime = 0
+	}
+	if req.ReadTime > 300 {
+		req.ReadTime = 300
+	}
 
 	var history models.ReadHistory
 	database.DB.Where("user_id = ? AND article_id = ?", userID, articleID).
@@ -243,6 +254,21 @@ func GetArticleCompletion(c *gin.Context) {
 		Order("published_at DESC").
 		First(&nextArticle)
 
+	var studyNote *services.ArticleStudyNoteResponse
+	var aiDraft *services.ArticleStudyNoteResponse
+	if aiAnalysisService != nil && aiAnalysisService.IsConfigured() {
+		if draft, err := buildAIStudyNoteDraft(userID.(uint), article.ID); err == nil {
+			aiDraft = draft
+		} else {
+			fmt.Printf("AI 精读笔记生成失败，回退规则生成: %v\n", err)
+		}
+	}
+	if note, err := services.NewArticleStudyNoteService(database.DB).GenerateNoteWithDraft(userID.(uint), article.ID, false, aiDraft); err == nil {
+		studyNote = note
+	} else {
+		fmt.Printf("生成精读笔记失败: %v\n", err)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"data": gin.H{
 			"article": article,
@@ -256,9 +282,1081 @@ func GetArticleCompletion(c *gin.Context) {
 				"due_review_words": dueCount,
 			},
 			"words":        words,
+			"study_note":   studyNote,
 			"next_article": nextArticle,
 		},
 	})
+}
+
+// GetArticleStudyNote 获取用户文章精读笔记
+func GetArticleStudyNote(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	articleID, ok := parsePathUint(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid article id"})
+		return
+	}
+
+	note, err := services.NewArticleStudyNoteService(database.DB).GetNote(userID.(uint), articleID)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Study note not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load study note"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": note})
+}
+
+// GenerateArticleStudyNote 生成或刷新用户文章精读笔记
+func GenerateArticleStudyNote(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	articleID, ok := parsePathUint(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid article id"})
+		return
+	}
+
+	var req struct {
+		Force bool `json:"force"`
+	}
+	_ = c.ShouldBindJSON(&req)
+
+	noteService := services.NewArticleStudyNoteService(database.DB)
+	var aiDraft *services.ArticleStudyNoteResponse
+	if aiAnalysisService != nil && aiAnalysisService.IsConfigured() {
+		if draft, err := buildAIStudyNoteDraft(userID.(uint), articleID); err == nil {
+			aiDraft = draft
+		} else {
+			fmt.Printf("AI 精读笔记生成失败，回退规则生成: %v\n", err)
+		}
+	}
+
+	note, err := noteService.GenerateNoteWithDraft(userID.(uint), articleID, req.Force, aiDraft)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate study note"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": note})
+}
+
+type aiStudyNoteEventPayload struct {
+	EventType  string `json:"event_type"`
+	SourceText string `json:"source_text"`
+	ResultText string `json:"result_text,omitempty"`
+	Context    string `json:"context,omitempty"`
+}
+
+type aiStudyNoteVocabularyPayload struct {
+	Word        string `json:"word"`
+	Translation string `json:"translation,omitempty"`
+	Context     string `json:"context,omitempty"`
+}
+
+func buildAIStudyNoteDraft(userID, articleID uint) (*services.ArticleStudyNoteResponse, error) {
+	var article models.Article
+	if err := database.DB.Where("id = ? AND status = ?", articleID, "published").First(&article).Error; err != nil {
+		return nil, err
+	}
+
+	var events []models.ArticleStudyEvent
+	if err := database.DB.
+		Where("user_id = ? AND article_id = ?", userID, articleID).
+		Order("created_at ASC").
+		Limit(80).
+		Find(&events).Error; err != nil {
+		return nil, err
+	}
+	eventPayload := make([]aiStudyNoteEventPayload, 0, len(events))
+	for _, event := range events {
+		eventPayload = append(eventPayload, aiStudyNoteEventPayload{
+			EventType:  event.EventType,
+			SourceText: truncateRunes(event.SourceText, 1000),
+			ResultText: truncateRunes(event.ResultText, 1200),
+			Context:    truncateRunes(event.Context, 800),
+		})
+	}
+
+	var words []models.Vocabulary
+	if err := database.DB.
+		Where("user_id = ? AND article_id = ?", userID, articleID).
+		Order("created_at ASC").
+		Limit(80).
+		Find(&words).Error; err != nil {
+		return nil, err
+	}
+	wordPayload := make([]aiStudyNoteVocabularyPayload, 0, len(words))
+	for _, word := range words {
+		wordPayload = append(wordPayload, aiStudyNoteVocabularyPayload{
+			Word:        word.Word,
+			Translation: word.Translation,
+			Context:     truncateRunes(word.Context, 800),
+		})
+	}
+
+	eventsJSON, _ := json.Marshal(eventPayload)
+	wordsJSON, _ := json.Marshal(wordPayload)
+	return aiAnalysisService.GenerateStudyNote(services.AIStudyNoteInput{
+		ArticleTitle:   article.Title,
+		ArticleSummary: firstNonEmptyString(article.SummaryCN, article.Summary),
+		ArticleContent: truncateRunes(article.Content, 10000),
+		EventsJSON:     string(eventsJSON),
+		VocabularyJSON: string(wordsJSON),
+	})
+}
+
+type articleQuizQuestionResponse struct {
+	ID           uint     `json:"id"`
+	QuestionType string   `json:"question_type"`
+	Prompt       string   `json:"prompt"`
+	Options      []string `json:"options"`
+	SortOrder    int      `json:"sort_order"`
+	CorrectIndex *int     `json:"correct_index,omitempty"`
+	Explanation  string   `json:"explanation,omitempty"`
+	UserAnswer   *int     `json:"user_answer,omitempty"`
+	IsCorrect    *bool    `json:"is_correct,omitempty"`
+}
+
+type articleQuizAttemptResponse struct {
+	ID          uint      `json:"id"`
+	Score       int       `json:"score"`
+	Total       int       `json:"total"`
+	Percentage  int       `json:"percentage"`
+	Answers     []int     `json:"answers"`
+	CompletedAt time.Time `json:"completed_at"`
+}
+
+type articleQuizResponse struct {
+	ID            uint                          `json:"id"`
+	ArticleID     uint                          `json:"article_id"`
+	Title         string                        `json:"title"`
+	Questions     []articleQuizQuestionResponse `json:"questions"`
+	LatestAttempt *articleQuizAttemptResponse   `json:"latest_attempt,omitempty"`
+}
+
+type articleKnowledgeGraphNode struct {
+	ID          string                 `json:"id"`
+	Type        string                 `json:"type"`
+	Label       string                 `json:"label"`
+	Description string                 `json:"description,omitempty"`
+	Weight      int                    `json:"weight"`
+	Mastery     *int                   `json:"mastery,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type articleKnowledgeGraphEdge struct {
+	ID       string `json:"id"`
+	Source   string `json:"source"`
+	Target   string `json:"target"`
+	Relation string `json:"relation"`
+	Label    string `json:"label"`
+	Weight   int    `json:"weight"`
+}
+
+type articleKnowledgeGraphLane struct {
+	ID          string                      `json:"id"`
+	Title       string                      `json:"title"`
+	Description string                      `json:"description"`
+	NodeIDs     []string                    `json:"node_ids"`
+	Nodes       []articleKnowledgeGraphNode `json:"nodes"`
+}
+
+type articleKnowledgeGraphAction struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Label       string `json:"label"`
+	Href        string `json:"href,omitempty"`
+	FocusNodeID string `json:"focus_node_id,omitempty"`
+	Priority    int    `json:"priority"`
+}
+
+type articleKnowledgeGraphResponse struct {
+	Article articleKnowledgeGraphNode     `json:"article"`
+	Lanes   []articleKnowledgeGraphLane   `json:"lanes"`
+	Edges   []articleKnowledgeGraphEdge   `json:"edges"`
+	Actions []articleKnowledgeGraphAction `json:"actions"`
+	Stats   gin.H                         `json:"stats"`
+}
+
+// GetArticleKnowledgeGraph 获取单篇文章的学习知识图谱
+func GetArticleKnowledgeGraph(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	articleID, err := strconv.ParseUint(c.Param("id"), 10, 64)
+	if err != nil || articleID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid article id"})
+		return
+	}
+
+	var article models.Article
+	if err := database.DB.Preload("Category").
+		Where("id = ? AND status = ?", articleID, "published").
+		First(&article).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+		return
+	}
+
+	var vocabulary []models.Vocabulary
+	if err := database.DB.
+		Where("user_id = ? AND article_id = ?", userID, article.ID).
+		Order("forgotten_count DESC, review_count ASC, created_at DESC").
+		Find(&vocabulary).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load article vocabulary"})
+		return
+	}
+
+	var history models.ReadHistory
+	database.DB.Where("user_id = ? AND article_id = ?", userID, article.ID).First(&history)
+
+	c.JSON(http.StatusOK, gin.H{"data": buildArticleKnowledgeGraph(article, vocabulary, history)})
+}
+
+func buildArticleKnowledgeGraph(article models.Article, vocabulary []models.Vocabulary, history models.ReadHistory) articleKnowledgeGraphResponse {
+	paragraphs := splitArticleParagraphs(article.Content)
+	articleNode := articleKnowledgeGraphNode{
+		ID:          fmt.Sprintf("article:%d", article.ID),
+		Type:        "article",
+		Label:       article.Title,
+		Description: firstNonEmptyString(article.SummaryCN, article.Summary, article.Category.Name),
+		Weight:      100,
+		Metadata: map[string]interface{}{
+			"article_id":        article.ID,
+			"slug":              article.Slug,
+			"difficulty_level":  article.DifficultyLevel,
+			"cefr_level":        article.CEFRLevel,
+			"word_count":        article.WordCount,
+			"reading_time":      article.ReadingTime,
+			"read_progress":     history.ReadProgress,
+			"completed":         history.IsCompleted,
+			"paragraph_count":   len(paragraphs),
+			"highlighted_words": len(vocabulary),
+		},
+	}
+
+	nodes := []articleKnowledgeGraphNode{articleNode}
+	edges := make([]articleKnowledgeGraphEdge, 0)
+	laneMap := map[string][]articleKnowledgeGraphNode{
+		"structure":  {},
+		"vocabulary": {},
+		"grammar":    {},
+		"sentences":  {},
+		"review":     {},
+	}
+
+	addNode := func(lane string, node articleKnowledgeGraphNode, relation, label string, weight int) {
+		nodes = append(nodes, node)
+		laneMap[lane] = append(laneMap[lane], node)
+		edges = append(edges, articleKnowledgeGraphEdge{
+			ID:       fmt.Sprintf("edge:%s:%s", articleNode.ID, node.ID),
+			Source:   articleNode.ID,
+			Target:   node.ID,
+			Relation: relation,
+			Label:    label,
+			Weight:   weight,
+		})
+	}
+
+	for index, value := range articleKnowledgeTopics(article) {
+		node := articleKnowledgeGraphNode{
+			ID:          fmt.Sprintf("topic:%d:%s", article.ID, normalizeKnowledgeID(value)),
+			Type:        "topic",
+			Label:       value,
+			Description: "文章主题和阅读方向",
+			Weight:      72 - index*3,
+		}
+		addNode("structure", node, "has_topic", "主题", 70)
+	}
+
+	for index, paragraph := range paragraphs {
+		if index >= 4 {
+			break
+		}
+		node := articleKnowledgeGraphNode{
+			ID:          fmt.Sprintf("paragraph:%d:%d", article.ID, index+1),
+			Type:        "structure",
+			Label:       fmt.Sprintf("第 %d 段", index+1),
+			Description: truncateKnowledgeText(firstSentence(paragraph), 150),
+			Weight:      68 - index*3,
+			Metadata: map[string]interface{}{
+				"paragraph_index": index,
+			},
+		}
+		addNode("structure", node, "has_part", "段落", 64)
+	}
+
+	for index, vocab := range vocabulary {
+		if index >= 16 {
+			break
+		}
+		mastery := articleVocabularyMastery(vocab)
+		node := articleKnowledgeGraphNode{
+			ID:          fmt.Sprintf("word:%d", vocab.ID),
+			Type:        "word",
+			Label:       vocab.Word,
+			Description: firstNonEmptyString(firstMeaningText(vocab.Translation), firstMeaningText(vocab.Definition), vocab.Context),
+			Weight:      90 - minInt(index*2, 32),
+			Mastery:     &mastery,
+			Metadata: map[string]interface{}{
+				"vocabulary_id":   vocab.ID,
+				"is_learned":      vocab.IsLearned,
+				"review_count":    vocab.ReviewCount,
+				"forgotten_count": vocab.ForgottenCount,
+				"next_review_at":  vocab.NextReviewAt,
+				"context":         vocab.Context,
+			},
+		}
+		addNode("vocabulary", node, "contains_word", "词汇", 86)
+		if vocab.ForgottenCount > 0 || !vocab.IsLearned {
+			reviewNode := articleKnowledgeGraphNode{
+				ID:          fmt.Sprintf("review:%d", vocab.ID),
+				Type:        "review",
+				Label:       vocab.Word,
+				Description: articleReviewDescription(vocab),
+				Weight:      82 + minInt(vocab.ForgottenCount*4, 14),
+				Mastery:     &mastery,
+				Metadata: map[string]interface{}{
+					"vocabulary_id": vocab.ID,
+					"word":          vocab.Word,
+				},
+			}
+			addNode("review", reviewNode, "needs_review", "复习", 92)
+		}
+	}
+
+	grammarNames := articleGrammarPoints(article.Content)
+	for index, name := range grammarNames {
+		node := articleKnowledgeGraphNode{
+			ID:          fmt.Sprintf("grammar:%d:%s", article.ID, normalizeKnowledgeID(name)),
+			Type:        "grammar",
+			Label:       name,
+			Description: articleGrammarDescription(name),
+			Weight:      84 - index*5,
+		}
+		addNode("grammar", node, "has_grammar", "语法", 78)
+	}
+
+	for index, sentence := range articleDifficultSentences(paragraphs) {
+		node := articleKnowledgeGraphNode{
+			ID:          fmt.Sprintf("sentence:%d:%d", article.ID, index+1),
+			Type:        "sentence",
+			Label:       fmt.Sprintf("长难句 %d", index+1),
+			Description: truncateKnowledgeText(sentence, 220),
+			Weight:      80 - index*4,
+			Metadata: map[string]interface{}{
+				"sentence": sentence,
+			},
+		}
+		addNode("sentences", node, "has_sentence", "长难句", 76)
+	}
+
+	lanes := []articleKnowledgeGraphLane{
+		buildArticleKnowledgeLane("structure", "文章结构", "主题、段落和阅读框架", laneMap["structure"]),
+		buildArticleKnowledgeLane("vocabulary", "重点词汇", "这篇文章里的已保存词和高价值词", laneMap["vocabulary"]),
+		buildArticleKnowledgeLane("grammar", "语法结构", "从原文规则识别出的语法点", laneMap["grammar"]),
+		buildArticleKnowledgeLane("sentences", "长难句/语境", "适合精读和拆句的句子", laneMap["sentences"]),
+		buildArticleKnowledgeLane("review", "复习动作", "围绕本文需要优先处理的薄弱词", laneMap["review"]),
+	}
+
+	actions := buildArticleKnowledgeActions(article, laneMap)
+	return articleKnowledgeGraphResponse{
+		Article: articleNode,
+		Lanes:   lanes,
+		Edges:   edges,
+		Actions: actions,
+		Stats: gin.H{
+			"total_nodes":      len(nodes),
+			"total_edges":      len(edges),
+			"vocabulary_count": len(laneMap["vocabulary"]),
+			"grammar_count":    len(laneMap["grammar"]),
+			"sentence_count":   len(laneMap["sentences"]),
+			"review_count":     len(laneMap["review"]),
+		},
+	}
+}
+
+func buildArticleKnowledgeLane(id, title, description string, nodes []articleKnowledgeGraphNode) articleKnowledgeGraphLane {
+	nodeIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		nodeIDs = append(nodeIDs, node.ID)
+	}
+	return articleKnowledgeGraphLane{
+		ID:          id,
+		Title:       title,
+		Description: description,
+		NodeIDs:     nodeIDs,
+		Nodes:       nodes,
+	}
+}
+
+func buildArticleKnowledgeActions(article models.Article, lanes map[string][]articleKnowledgeGraphNode) []articleKnowledgeGraphAction {
+	actions := []articleKnowledgeGraphAction{
+		{
+			ID:          "read-structure",
+			Type:        "structure",
+			Title:       "先看文章结构",
+			Description: "用主题和段落框架快速建立阅读地图。",
+			Label:       "查看结构",
+			FocusNodeID: firstArticleKnowledgeNodeID(lanes["structure"]),
+			Priority:    90,
+		},
+	}
+	if len(lanes["review"]) > 0 {
+		actions = append(actions, articleKnowledgeGraphAction{
+			ID:          "review-words",
+			Type:        "review",
+			Title:       "复习本文薄弱词",
+			Description: fmt.Sprintf("本文有 %d 个词需要优先复习。", len(lanes["review"])),
+			Label:       "开始复习",
+			Href:        "/vocabulary?mode=review",
+			FocusNodeID: firstArticleKnowledgeNodeID(lanes["review"]),
+			Priority:    100,
+		})
+	}
+	if len(lanes["grammar"]) > 0 {
+		actions = append(actions, articleKnowledgeGraphAction{
+			ID:          "grammar-review",
+			Type:        "grammar",
+			Title:       "拆解本文语法",
+			Description: "按语法点回到原文句子做精读。",
+			Label:       "看语法",
+			FocusNodeID: firstArticleKnowledgeNodeID(lanes["grammar"]),
+			Priority:    82,
+		})
+	}
+	if len(lanes["sentences"]) > 0 {
+		actions = append(actions, articleKnowledgeGraphAction{
+			ID:          "sentence-intensive",
+			Type:        "sentence",
+			Title:       "精读长难句",
+			Description: "选择长句做结构拆解、翻译和仿写。",
+			Label:       "看长难句",
+			FocusNodeID: firstArticleKnowledgeNodeID(lanes["sentences"]),
+			Priority:    78,
+		})
+	}
+	sort.SliceStable(actions, func(i, j int) bool {
+		return actions[i].Priority > actions[j].Priority
+	})
+	_ = article
+	return actions
+}
+
+func firstArticleKnowledgeNodeID(nodes []articleKnowledgeGraphNode) string {
+	if len(nodes) == 0 {
+		return ""
+	}
+	return nodes[0].ID
+}
+
+func articleKnowledgeTopics(article models.Article) []string {
+	values := []string{}
+	for _, value := range []string{article.Category.Name, article.Category.NameEN, article.Tags, article.Keywords} {
+		for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+			return r == ',' || r == '，' || r == ';' || r == '；' || r == '|'
+		}) {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				values = append(values, part)
+			}
+		}
+	}
+	if article.DifficultyLevel != "" {
+		values = append(values, "难度 "+article.DifficultyLevel)
+	}
+	if article.CEFRLevel != "" {
+		values = append(values, "CEFR "+article.CEFRLevel)
+	}
+	return uniqueArticleKnowledgeValues(values, 8)
+}
+
+func articleGrammarPoints(text string) []string {
+	rules := []struct {
+		name    string
+		pattern string
+	}{
+		{"定语从句", `(?i)\b(who|whom|whose|which|that)\b`},
+		{"条件句", `(?i)\bif\b.+\b(would|could|might|will|can)\b`},
+		{"完成时", `(?i)\b(has|have|had)\s+\w+(ed|en)\b`},
+		{"被动语态", `(?i)\b(am|is|are|was|were|be|been|being)\s+\w+(ed|en)\b`},
+		{"非谓语结构", `(?i)\b(to\s+\w+|\w+ing)\b`},
+		{"比较结构", `(?i)\b(more|less|better|worse|than|as\s+\w+\s+as)\b`},
+		{"转折连接", `(?i)\b(however|although|though|whereas|while)\b`},
+		{"因果连接", `(?i)\b(because|since|therefore|thus|so that|as a result)\b`},
+	}
+	points := []string{}
+	for _, rule := range rules {
+		if regexp.MustCompile(rule.pattern).MatchString(text) {
+			points = append(points, rule.name)
+		}
+	}
+	return uniqueArticleKnowledgeValues(points, 8)
+}
+
+func articleGrammarDescription(name string) string {
+	descriptions := map[string]string{
+		"定语从句":  "修饰名词或代词，阅读时先找先行词。",
+		"条件句":   "表达条件与结果，先理解 if/条件部分。",
+		"完成时":   "强调完成、经验或持续影响。",
+		"被动语态":  "突出动作承受者，注意真正动作发出者可能被省略。",
+		"非谓语结构": "压缩信息的动词形式，适合拆成长句成分。",
+		"比较结构":  "比较程度、数量或性质，注意比较对象。",
+		"转折连接":  "让步或转折，主句通常是作者重点。",
+		"因果连接":  "原因、结果或推论关系，是理解论证链的关键。",
+	}
+	return descriptions[name]
+}
+
+func articleDifficultSentences(paragraphs []string) []string {
+	type scoredSentence struct {
+		text  string
+		score int
+	}
+	items := []scoredSentence{}
+	for _, paragraph := range paragraphs {
+		for _, sentence := range regexp.MustCompile(`[^.!?]+[.!?]+["')\]]*|[^.!?]+$`).FindAllString(paragraph, -1) {
+			sentence = strings.TrimSpace(sentence)
+			words := regexp.MustCompile(`[A-Za-z]+(?:['’][A-Za-z]+)?`).FindAllString(sentence, -1)
+			if len(words) < 14 {
+				continue
+			}
+			score := len(words)
+			if strings.Contains(sentence, ",") {
+				score += 8
+			}
+			lower := strings.ToLower(sentence)
+			for _, marker := range []string{"although", "because", "which", "that", "while", "however", "therefore"} {
+				if strings.Contains(lower, marker) {
+					score += 5
+				}
+			}
+			items = append(items, scoredSentence{text: sentence, score: score})
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].score == items[j].score {
+			return items[i].text < items[j].text
+		}
+		return items[i].score > items[j].score
+	})
+	result := []string{}
+	for _, item := range items {
+		result = append(result, item.text)
+		if len(result) >= 6 {
+			break
+		}
+	}
+	return result
+}
+
+func articleVocabularyMastery(vocab models.Vocabulary) int {
+	score := 35 + vocab.ReviewCount*12 - vocab.ForgottenCount*20
+	if vocab.IsLearned {
+		score += 30
+	}
+	if vocab.NextReviewAt != nil && !vocab.NextReviewAt.After(time.Now()) {
+		score -= 10
+	}
+	if score < 0 {
+		return 0
+	}
+	if score > 100 {
+		return 100
+	}
+	return score
+}
+
+func articleReviewDescription(vocab models.Vocabulary) string {
+	if vocab.ForgottenCount > 0 {
+		return fmt.Sprintf("忘记 %d 次，建议回到原文语境复习。", vocab.ForgottenCount)
+	}
+	if !vocab.IsLearned {
+		return "尚未掌握，建议结合本文语境复习。"
+	}
+	return "建议复盘一次，巩固文章语境。"
+}
+
+func firstMeaningText(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(value), &values); err == nil && len(values) > 0 {
+		return strings.TrimSpace(values[0])
+	}
+	var items []map[string]string
+	if err := json.Unmarshal([]byte(value), &items); err == nil && len(items) > 0 {
+		return firstNonEmptyString(items[0]["definition"], items[0]["translation"])
+	}
+	parts := strings.FieldsFunc(value, func(r rune) bool {
+		return r == '\n' || r == ';' || r == '；' || r == '。'
+	})
+	if len(parts) > 0 {
+		return strings.TrimSpace(parts[0])
+	}
+	return value
+}
+
+func uniqueArticleKnowledgeValues(values []string, limit int) []string {
+	result := []string{}
+	seen := map[string]bool{}
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		key := strings.ToLower(value)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, value)
+		if len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+func normalizeKnowledgeID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = regexp.MustCompile(`[^a-z0-9\p{Han}]+`).ReplaceAllString(value, "-")
+	value = strings.Trim(value, "-")
+	if value == "" {
+		return "item"
+	}
+	return value
+}
+
+func truncateKnowledgeText(value string, maxRunes int) string {
+	value = strings.TrimSpace(value)
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+// GetArticleQuiz 获取或生成文章读后测验
+func GetArticleQuiz(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	articleID, _ := strconv.Atoi(c.Param("id"))
+
+	quiz, err := ensureArticleQuiz(uint(articleID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+		return
+	}
+
+	var latestAttempt models.ArticleQuizAttempt
+	hasAttempt := database.DB.
+		Where("user_id = ? AND quiz_id = ?", userID, quiz.ID).
+		Order("created_at DESC").
+		First(&latestAttempt).Error == nil
+
+	var attempt *models.ArticleQuizAttempt
+	if hasAttempt {
+		attempt = &latestAttempt
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": buildArticleQuizResponse(quiz, attempt, hasAttempt)})
+}
+
+// SubmitArticleQuiz 提交文章读后测验答案
+func SubmitArticleQuiz(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	articleID, _ := strconv.Atoi(c.Param("id"))
+
+	var req struct {
+		Answers []int `json:"answers" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	quiz, err := ensureArticleQuiz(uint(articleID))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+		return
+	}
+
+	if len(req.Answers) != len(quiz.Questions) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Answer count does not match question count"})
+		return
+	}
+
+	score := 0
+	for index, question := range quiz.Questions {
+		answer := req.Answers[index]
+		if answer < 0 || answer >= len(decodeStringSlice(question.Options)) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid answer index"})
+			return
+		}
+		if answer == question.CorrectIndex {
+			score++
+		}
+	}
+
+	answersJSON, _ := json.Marshal(req.Answers)
+	total := len(quiz.Questions)
+	percentage := 0
+	if total > 0 {
+		percentage = int(math.Round(float64(score) / float64(total) * 100))
+	}
+
+	attempt := models.ArticleQuizAttempt{
+		UserID:      userID.(uint),
+		QuizID:      quiz.ID,
+		Answers:     string(answersJSON),
+		Score:       score,
+		Total:       total,
+		Percentage:  percentage,
+		CompletedAt: time.Now(),
+	}
+	if err := database.DB.Create(&attempt).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save quiz attempt"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": buildArticleQuizResponse(quiz, &attempt, true)})
+}
+
+func ensureArticleQuiz(articleID uint) (models.ArticleQuiz, error) {
+	var quiz models.ArticleQuiz
+	if err := database.DB.
+		Preload("Questions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC, id ASC")
+		}).
+		Where("article_id = ?", articleID).
+		First(&quiz).Error; err == nil && len(quiz.Questions) > 0 {
+		return quiz, nil
+	}
+
+	var article models.Article
+	if err := database.DB.Preload("Category").
+		Where("id = ? AND status = ?", articleID, "published").
+		First(&article).Error; err != nil {
+		return quiz, err
+	}
+
+	quiz = models.ArticleQuiz{
+		ArticleID: article.ID,
+		Title:     "读后理解测验",
+	}
+	if err := database.DB.Where("article_id = ?", article.ID).
+		Attrs(quiz).
+		FirstOrCreate(&quiz).Error; err != nil {
+		return quiz, err
+	}
+
+	var count int64
+	if err := database.DB.Model(&models.ArticleQuizQuestion{}).
+		Where("quiz_id = ?", quiz.ID).
+		Count(&count).Error; err != nil {
+		return quiz, err
+	}
+	if count == 0 {
+		questions := buildRuleArticleQuizQuestions(article, quiz.ID)
+		if len(questions) > 0 {
+			if err := database.DB.Create(&questions).Error; err != nil {
+				return quiz, err
+			}
+		}
+	}
+
+	if err := database.DB.
+		Preload("Questions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC, id ASC")
+		}).
+		First(&quiz, quiz.ID).Error; err != nil {
+		return quiz, err
+	}
+	return quiz, nil
+}
+
+func buildArticleQuizResponse(quiz models.ArticleQuiz, attempt *models.ArticleQuizAttempt, reveal bool) articleQuizResponse {
+	answers := []int{}
+	attemptResponse := (*articleQuizAttemptResponse)(nil)
+	if attempt != nil {
+		answers = decodeIntSlice(attempt.Answers)
+		attemptResponse = &articleQuizAttemptResponse{
+			ID:          attempt.ID,
+			Score:       attempt.Score,
+			Total:       attempt.Total,
+			Percentage:  attempt.Percentage,
+			Answers:     answers,
+			CompletedAt: attempt.CompletedAt,
+		}
+	}
+
+	questions := make([]articleQuizQuestionResponse, 0, len(quiz.Questions))
+	for index, question := range quiz.Questions {
+		item := articleQuizQuestionResponse{
+			ID:           question.ID,
+			QuestionType: question.QuestionType,
+			Prompt:       question.Prompt,
+			Options:      decodeStringSlice(question.Options),
+			SortOrder:    question.SortOrder,
+		}
+		if reveal {
+			correctIndex := question.CorrectIndex
+			item.CorrectIndex = &correctIndex
+			item.Explanation = question.Explanation
+			if index < len(answers) {
+				userAnswer := answers[index]
+				item.UserAnswer = &userAnswer
+				isCorrect := userAnswer == question.CorrectIndex
+				item.IsCorrect = &isCorrect
+			}
+		}
+		questions = append(questions, item)
+	}
+
+	return articleQuizResponse{
+		ID:            quiz.ID,
+		ArticleID:     quiz.ArticleID,
+		Title:         quiz.Title,
+		Questions:     questions,
+		LatestAttempt: attemptResponse,
+	}
+}
+
+func buildRuleArticleQuizQuestions(article models.Article, quizID uint) []models.ArticleQuizQuestion {
+	paragraphs := splitArticleParagraphs(article.Content)
+	if len(paragraphs) == 0 {
+		paragraphs = []string{article.Summary}
+	}
+
+	summary := firstNonEmptyString(strings.TrimSpace(article.Summary), firstSentence(paragraphs[0]))
+	categoryName := "这类话题"
+	if article.Category.Name != "" {
+		categoryName = article.Category.Name
+	}
+
+	mainPointOptions := uniqueOptions([]string{
+		summary,
+		fmt.Sprintf("文章主要介绍 %s 领域的一项新闻或趋势。", categoryName),
+		"文章主要比较多个无关事件的时间顺序。",
+		"文章主要讲述作者的个人学习经历。",
+	})
+
+	keywords := extractQuizKeywords(article)
+	keyword := "key idea"
+	if len(keywords) > 0 {
+		keyword = keywords[0]
+	}
+
+	detailParagraph := paragraphs[minArticleInt(1, len(paragraphs)-1)]
+	lastParagraph := paragraphs[len(paragraphs)-1]
+	questions := []models.ArticleQuizQuestion{
+		newQuizQuestion(quizID, 1,
+			"Which statement best captures the main idea of the article?",
+			mainPointOptions,
+			0,
+			"主旨题可以先看标题、摘要和每段首句；正确选项应覆盖全文，而不是只抓一个局部细节。"),
+		newQuizQuestion(quizID, 2,
+			"According to the article, which detail is explicitly mentioned?",
+			uniqueOptions([]string{
+				firstSentence(detailParagraph),
+				"The article says the trend has already solved every related problem.",
+				"The article argues that no further rules or oversight are needed.",
+				"The article focuses only on entertainment and personal stories.",
+			}),
+			0,
+			"细节题要回到原文定位。正确选项来自文章中的具体句子。"),
+		newQuizQuestion(quizID, 3,
+			fmt.Sprintf("In this article, what role does “%s” most likely play?", keyword),
+			[]string{
+				"It names an important concept or actor in the article.",
+				"It is used as a time marker only.",
+				"It signals a direct quotation from a speaker.",
+				"It is unrelated to the article's topic.",
+			},
+			0,
+			"词义语境题不只看中文意思，还要判断该词在文章论述中承担的作用。"),
+		newQuizQuestion(quizID, 4,
+			"What can a careful reader infer from the final part of the article?",
+			uniqueOptions([]string{
+				firstSentence(lastParagraph),
+				"The article claims there are no remaining challenges.",
+				"The article says the topic is already irrelevant.",
+				"The article ends by changing to a completely different subject.",
+			}),
+			0,
+			"推理题通常来自结尾段的态度、风险或未解决问题。"),
+		newQuizQuestion(quizID, 5,
+			"Which reading strategy best helps understand this article?",
+			[]string{
+				"Track the problem, the proposed response, and the remaining challenge.",
+				"Ignore repeated topic words and read only the dates.",
+				"Translate every word before identifying the article structure.",
+				"Skip the summary and focus only on the image.",
+			},
+			0,
+			"外刊阅读可以先抓问题、方案、影响和限制，再处理生词和长难句。"),
+	}
+
+	for index := range questions {
+		questions[index].SortOrder = index + 1
+	}
+	return questions
+}
+
+func newQuizQuestion(quizID uint, sortOrder int, prompt string, options []string, correctIndex int, explanation string) models.ArticleQuizQuestion {
+	options, correctIndex = shuffleQuizOptions(options, correctIndex, int64(quizID)*100+int64(sortOrder))
+	optionsJSON, _ := json.Marshal(options)
+	return models.ArticleQuizQuestion{
+		QuizID:       quizID,
+		SortOrder:    sortOrder,
+		QuestionType: "single_choice",
+		Prompt:       prompt,
+		Options:      string(optionsJSON),
+		CorrectIndex: correctIndex,
+		Explanation:  explanation,
+	}
+}
+
+func shuffleQuizOptions(options []string, correctIndex int, seed int64) ([]string, int) {
+	if correctIndex < 0 || correctIndex >= len(options) {
+		return options, correctIndex
+	}
+
+	type optionItem struct {
+		Text    string
+		Correct bool
+	}
+	items := make([]optionItem, 0, len(options))
+	for index, option := range options {
+		items = append(items, optionItem{
+			Text:    option,
+			Correct: index == correctIndex,
+		})
+	}
+
+	random := rand.New(rand.NewSource(seed))
+	random.Shuffle(len(items), func(i, j int) {
+		items[i], items[j] = items[j], items[i]
+	})
+
+	shuffled := make([]string, 0, len(items))
+	nextCorrectIndex := correctIndex
+	for index, item := range items {
+		shuffled = append(shuffled, item.Text)
+		if item.Correct {
+			nextCorrectIndex = index
+		}
+	}
+	return shuffled, nextCorrectIndex
+}
+
+func splitArticleParagraphs(content string) []string {
+	parts := strings.Split(content, "\n\n")
+	paragraphs := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			paragraphs = append(paragraphs, part)
+		}
+	}
+	return paragraphs
+}
+
+func firstSentence(text string) string {
+	sentences := regexp.MustCompile(`[^.!?]+[.!?]+["')\]]*|[^.!?]+$`).FindAllString(strings.TrimSpace(text), -1)
+	if len(sentences) == 0 {
+		return strings.TrimSpace(text)
+	}
+	return strings.TrimSpace(sentences[0])
+}
+
+func extractQuizKeywords(article models.Article) []string {
+	text := strings.ToLower(article.Title + " " + article.Summary + " " + article.Tags)
+	words := regexp.MustCompile(`[a-z]+(?:-[a-z]+)?`).FindAllString(text, -1)
+	stop := map[string]bool{
+		"the": true, "and": true, "for": true, "with": true, "that": true, "this": true,
+		"from": true, "into": true, "could": true, "would": true, "should": true, "have": true,
+		"has": true, "are": true, "was": true, "were": true, "how": true, "why": true,
+		"can": true, "its": true, "new": true, "first": true,
+	}
+	counts := make(map[string]int)
+	for _, word := range words {
+		if len(word) < 4 || stop[word] {
+			continue
+		}
+		counts[word]++
+	}
+	keywords := make([]string, 0, len(counts))
+	for word := range counts {
+		keywords = append(keywords, word)
+	}
+	sort.Slice(keywords, func(i, j int) bool {
+		if counts[keywords[i]] == counts[keywords[j]] {
+			return keywords[i] < keywords[j]
+		}
+		return counts[keywords[i]] > counts[keywords[j]]
+	})
+	if len(keywords) > 5 {
+		return keywords[:5]
+	}
+	return keywords
+}
+
+func uniqueOptions(options []string) []string {
+	fallbacks := []string{
+		"The article presents a broad background rather than a specific claim.",
+		"The article says the issue has no practical importance.",
+		"The article mainly lists unrelated facts.",
+		"The article focuses only on personal opinion.",
+	}
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(options))
+	for _, option := range append(options, fallbacks...) {
+		option = strings.TrimSpace(option)
+		if option == "" || seen[option] {
+			continue
+		}
+		seen[option] = true
+		result = append(result, option)
+		if len(result) == 4 {
+			break
+		}
+	}
+	return result
+}
+
+func decodeStringSlice(raw string) []string {
+	values := []string{}
+	_ = json.Unmarshal([]byte(raw), &values)
+	return values
+}
+
+func decodeIntSlice(raw string) []int {
+	values := []int{}
+	_ = json.Unmarshal([]byte(raw), &values)
+	return values
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func minArticleInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // DiscussArticleWithAssistant 围绕文章和 AI 助手对话
@@ -309,12 +1407,14 @@ func DiscussArticleWithAssistant(c *gin.Context) {
 		return
 	}
 
+	assistantAnswer := strings.Builder{}
 	err := aiAnalysisService.DiscussArticleStream(
 		article.Title,
 		truncateRunes(summary, 1200),
 		truncateRunes(article.Content, 12000),
 		messages,
 		func(delta string) error {
+			assistantAnswer.WriteString(delta)
 			payload, err := json.Marshal(gin.H{"delta": delta})
 			if err != nil {
 				return err
@@ -332,6 +1432,12 @@ func DiscussArticleWithAssistant(c *gin.Context) {
 		fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
 		flusher.Flush()
 		return
+	}
+
+	if userID, exists := c.Get("user_id"); exists && len(messages) > 0 {
+		recordArticleStudyEvent(c, services.StudyEventAssistant, &article.ID, messages[len(messages)-1].Content, assistantAnswer.String(), "", map[string]any{
+			"user_id": userID,
+		})
 	}
 
 	fmt.Fprint(c.Writer, "data: [DONE]\n\n")
@@ -385,7 +1491,9 @@ type sentenceAnalysis struct {
 // AnalyzeSentence 句子级精读
 func AnalyzeSentence(c *gin.Context) {
 	var req struct {
-		Text string `json:"text" binding:"required"`
+		Text      string `json:"text" binding:"required"`
+		ArticleID *uint  `json:"article_id"`
+		Context   string `json:"context"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -395,6 +1503,13 @@ func AnalyzeSentence(c *gin.Context) {
 	text := strings.TrimSpace(req.Text)
 	if aiAnalysisService != nil && aiAnalysisService.IsConfigured() {
 		if result, err := aiAnalysisService.AnalyzeSentence(text); err == nil {
+			recordArticleStudyEvent(c, services.StudyEventSentenceAnalysis, req.ArticleID, text, result.Translation, req.Context, map[string]any{
+				"provider":        result.Provider,
+				"structure":       result.Structure,
+				"key_phrases":     result.KeyPhrases,
+				"difficulty_tips": result.DifficultyTips,
+				"word_count":      result.WordCount,
+			})
 			c.JSON(http.StatusOK, gin.H{"data": result})
 			return
 		} else {
@@ -409,9 +1524,16 @@ func AnalyzeSentence(c *gin.Context) {
 		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"data": buildSentenceAnalysis(text, translation),
+	analysis := buildSentenceAnalysis(text, translation)
+	recordArticleStudyEvent(c, services.StudyEventSentenceAnalysis, req.ArticleID, text, analysis.Translation, req.Context, map[string]any{
+		"provider":        analysis.Provider,
+		"structure":       analysis.Structure,
+		"key_phrases":     analysis.KeyPhrases,
+		"difficulty_tips": analysis.DifficultyTips,
+		"word_count":      analysis.WordCount,
 	})
+
+	c.JSON(http.StatusOK, gin.H{"data": analysis})
 }
 
 func buildSentenceAnalysis(text, translation string) sentenceAnalysis {

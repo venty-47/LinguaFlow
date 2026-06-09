@@ -69,6 +69,23 @@ max_items_per_feed = 10
 proxy = "http://127.0.0.1:7897"
 request_timeout_seconds = 45
 
+[video_learning]
+enabled = true
+storage_dir = "storage/videos"
+audio_dir = "storage/video-audio"
+transcript_dir = "storage/video-transcripts"
+max_upload_mb = 300
+max_duration_seconds = 3600
+allowed_extensions = ".mp4,.mov,.m4v,.webm,.mp3,.m4a"
+processing_timeout_seconds = 1800
+# Default local option: FunASR exposes an OpenAI-compatible endpoint.
+# Start it with: funasr-server --model sensevoice --device cpu
+transcription_provider = "funasr"
+transcription_base_url = "http://localhost:8000/v1"
+transcription_api_key = ""
+transcription_model = "sensevoice"
+max_audio_upload_mb = 500
+
 [[rss.feeds]]
 name = "VOA Learning English - Science & Technology"
 url = "https://learningenglish.voanews.com/api/zmg_pl-vomx-tpeymtm"

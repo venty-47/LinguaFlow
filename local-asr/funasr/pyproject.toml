@@ -10,6 +10,7 @@ dependencies = [
   "torchaudio",
   "huggingface-hub",
   "fastapi",
+  "faster-whisper",
   "uvicorn",
   "python-multipart",
 ]

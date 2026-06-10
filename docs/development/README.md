@@ -8,6 +8,7 @@
 - 前端 Next.js App Router 应用：见 [Next.js 前端开发规范](./nextjs-frontend.md)。
 - 背单词功能：见 [背单词功能实现文档](./vocabulary-learning.md)。
 - 英文视频学习功能：见 [英文视频学习功能实现文档](./video-learning.md)。
+- YouTube 字幕机制调研：见 [YouTube 字幕功能技术调研](./youtube-caption-technology.md)。
 - 根目录协作约定、构建命令、提交说明：见 [AGENTS.md](../../AGENTS.md)。
 
 ## 必须先读的文件

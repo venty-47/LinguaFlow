@@ -42,6 +42,8 @@ func InitDB(cfg *config.Config) error {
 		&models.ArticleStudyNote{},
 		&models.Subscription{},
 		&models.ReadHistory{},
+		&models.VideoLesson{},
+		&models.VideoSubtitle{},
 		&models.Vocabulary{},
 		&models.TranslationCache{},
 		&models.DictionaryCache{},

@@ -9,3 +9,5 @@ backend/storage/
 .omo/
 local-asr/funasr/.venv/
 local-asr/funasr/models/
+local-asr/funasr/*.log
+local-asr/funasr/__pycache__/

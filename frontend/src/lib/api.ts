@@ -169,6 +169,25 @@ export const ttsAPI = {
   }) => api.post('/tts', data),
 };
 
+export const videoLessonAPI = {
+  upload: (data: FormData) =>
+    postForm('/video-lessons', data),
+  getLessons: (params?: { page?: number; page_size?: number; status?: string }) =>
+    api.get('/video-lessons', { params }),
+  getLesson: (id: number) =>
+    api.get(`/video-lessons/${id}`),
+  deleteLesson: (id: number) =>
+    api.delete(`/video-lessons/${id}`),
+  regenerateSubtitles: (id: number) =>
+    api.post(`/video-lessons/${id}/regenerate-subtitles`),
+  getSubtitles: (id: number) =>
+    api.get(`/video-lessons/${id}/subtitles`),
+  getSubtitleVTTURL: (id: number) =>
+    `${API_URL}/video-lessons/${id}/subtitles.vtt`,
+  updateProgress: (id: number, data: { position_seconds: number; completed?: boolean }) =>
+    api.post(`/video-lessons/${id}/progress`, data),
+};
+
 // 生词本 API
 export const vocabularyAPI = {
   getVocabulary: (params?: { due?: boolean; article_id?: number; weak?: boolean }) =>

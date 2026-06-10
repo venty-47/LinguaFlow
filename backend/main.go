@@ -68,6 +68,7 @@ func main() {
 		firstNonEmpty(cfg.AO3.Proxy, cfg.RSS.Proxy),
 		firstPositive(cfg.AO3.RequestTimeoutSeconds, cfg.RSS.RequestTimeoutSeconds),
 	)
+	handlers.InitVideoLearningService(database.DB, cfg.VideoLearning)
 
 	// 创建 Gin 路由
 	r := gin.Default()
@@ -174,6 +175,18 @@ func main() {
 			protected.POST("/article-notes/:id", handlers.GenerateArticleStudyNote)
 			protected.POST("/sentences/analyze", middleware.PremiumRequired(database.DB), handlers.AnalyzeSentence)
 			protected.POST("/tts", handlers.GenerateSpeech)
+
+			videoLessons := protected.Group("/video-lessons")
+			{
+				videoLessons.POST("", handlers.CreateVideoLesson)
+				videoLessons.GET("", handlers.ListVideoLessons)
+				videoLessons.GET("/:id", handlers.GetVideoLesson)
+				videoLessons.DELETE("/:id", handlers.DeleteVideoLesson)
+				videoLessons.POST("/:id/regenerate-subtitles", handlers.RegenerateVideoSubtitles)
+				videoLessons.GET("/:id/subtitles", handlers.GetVideoSubtitles)
+				videoLessons.GET("/:id/subtitles.vtt", handlers.GetVideoSubtitlesVTT)
+				videoLessons.POST("/:id/progress", handlers.UpdateVideoProgress)
+			}
 
 			// 每日学习
 			protected.GET("/study/today", handlers.GetStudyToday)

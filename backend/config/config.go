@@ -9,16 +9,17 @@ import (
 )
 
 type Config struct {
-	Database    DatabaseConfig      `toml:"database"`
-	Redis       RedisConfig         `toml:"redis"`
-	JWT         JWTConfig           `toml:"jwt"`
-	Server      ServerConfig        `toml:"server"`
-	CORS        CORSConfig          `toml:"cors"`
-	Translation TranslationConfig   `toml:"translation"`
-	AI          AIConfig            `toml:"ai"`
-	TTS         TTSConfig           `toml:"tts"`
-	RSS         RSSConfig           `toml:"rss"`
-	AO3         AO3Config           `toml:"ao3"`
+	Database      DatabaseConfig      `toml:"database"`
+	Redis         RedisConfig         `toml:"redis"`
+	JWT           JWTConfig           `toml:"jwt"`
+	Server        ServerConfig        `toml:"server"`
+	CORS          CORSConfig          `toml:"cors"`
+	Translation   TranslationConfig   `toml:"translation"`
+	AI            AIConfig            `toml:"ai"`
+	TTS           TTSConfig           `toml:"tts"`
+	RSS           RSSConfig           `toml:"rss"`
+	AO3           AO3Config           `toml:"ao3"`
+	VideoLearning VideoLearningConfig `toml:"video_learning"`
 }
 
 type TranslationConfig struct {
@@ -75,6 +76,22 @@ type RSSFeedConfig struct {
 type AO3Config struct {
 	Proxy                 string `toml:"proxy"`
 	RequestTimeoutSeconds int    `toml:"request_timeout_seconds"`
+}
+
+type VideoLearningConfig struct {
+	Enabled                  bool   `toml:"enabled"`
+	StorageDir               string `toml:"storage_dir"`
+	AudioDir                 string `toml:"audio_dir"`
+	TranscriptDir            string `toml:"transcript_dir"`
+	MaxUploadMB              int    `toml:"max_upload_mb"`
+	MaxDurationSeconds       int    `toml:"max_duration_seconds"`
+	AllowedExtensions        string `toml:"allowed_extensions"`
+	ProcessingTimeoutSeconds int    `toml:"processing_timeout_seconds"`
+	TranscriptionProvider    string `toml:"transcription_provider"`
+	TranscriptionBaseURL     string `toml:"transcription_base_url"`
+	TranscriptionAPIKey      string `toml:"transcription_api_key"`
+	TranscriptionModel       string `toml:"transcription_model"`
+	MaxAudioUploadMB         int    `toml:"max_audio_upload_mb"`
 }
 
 type DatabaseConfig struct {

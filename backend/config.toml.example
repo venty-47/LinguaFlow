@@ -78,12 +78,12 @@ max_upload_mb = 300
 max_duration_seconds = 3600
 allowed_extensions = ".mp4,.mov,.m4v,.webm,.mp3,.m4a"
 processing_timeout_seconds = 1800
-# Default local option: FunASR exposes an OpenAI-compatible endpoint.
-# Start it with: funasr-server --model sensevoice --device cpu
-transcription_provider = "funasr"
-transcription_base_url = "http://localhost:8000/v1"
+# Default local option: faster-whisper exposes an OpenAI-compatible endpoint.
+# Start it with: cd ../local-asr/funasr && ./start-faster-whisper.sh
+transcription_provider = "faster-whisper"
+transcription_base_url = "http://localhost:8899/v1"
 transcription_api_key = ""
-transcription_model = "sensevoice"
+transcription_model = "faster-whisper-large-v3"
 max_audio_upload_mb = 500
 
 [[rss.feeds]]

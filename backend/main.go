@@ -214,6 +214,7 @@ func main() {
 			protected.POST("/vocabulary", handlers.AddToVocabulary)
 			protected.DELETE("/vocabulary/:id", handlers.DeleteVocabulary)
 			protected.PATCH("/vocabulary/:id/learned", handlers.MarkWordLearned)
+				protected.PATCH("/vocabulary/:id/notes", handlers.UpdateVocabularyNotes)
 			protected.POST("/vocabulary/:id/review", handlers.ReviewVocabulary)
 			protected.POST("/vocabulary/:id/review-answer", handlers.SubmitVocabularyReviewAnswer)
 		}

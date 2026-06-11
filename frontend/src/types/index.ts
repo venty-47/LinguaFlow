@@ -49,6 +49,7 @@ export interface Vocabulary {
   examples?: string;
   article_id?: number;
   context?: string;
+  notes?: string;
   is_learned: boolean;
   review_count: number;
   forgotten_count: number;

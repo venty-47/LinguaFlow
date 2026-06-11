@@ -283,9 +283,12 @@ export const vocabularyAPI = {
     definition?: string;
     translation?: string;
     examples?: string;
+    notes?: string;
   }) => api.post('/vocabulary', data),
   markLearned: (id: number) =>
     api.patch(`/vocabulary/${id}/learned`),
+  updateNotes: (id: number, notes: string) =>
+    api.patch(`/vocabulary/${id}/notes`, { notes }),
   reviewWord: (id: number, rating: 'forgot' | 'hard' | 'good') =>
     api.post(`/vocabulary/${id}/review`, { rating }),
   deleteWord: (id: number) =>

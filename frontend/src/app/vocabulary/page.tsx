@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
+  FileEdit,
   FileText,
   Headphones,
   Keyboard,
@@ -124,6 +125,10 @@ function VocabularyContent() {
   const [knowledgeGraph, setKnowledgeGraph] = useState<VocabularyKnowledgeGraph | null>(null);
   const [graphError, setGraphError] = useState('');
   const [activeTab, setActiveTab] = useState<'review' | 'manage'>('review');
+  const [notesDraft, setNotesDraft] = useState('');
+  const [notesSaving, setNotesSaving] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const notesWordIdRef = useRef<number | null>(null);
   const graphRequestRef = useRef(0);
 
   const fetchVocabulary = useCallback(async () => {
@@ -203,6 +208,34 @@ function VocabularyContent() {
   const selectedWord =
     vocabulary.find((item) => item.id === selectedWordId) || filteredVocabulary[0] || vocabulary[0];
   const canSubmit = Boolean((activeExercise?.options?.length ? selectedOption : answer).trim()) && !answerResult;
+
+  // Sync notes draft when selected word changes
+  useEffect(() => {
+    if (selectedWord) {
+      setNotesDraft(selectedWord.notes || '');
+      notesWordIdRef.current = selectedWord.id;
+      setNotesSaved(false);
+    }
+  }, [selectedWord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saveNotes = useCallback(async () => {
+    if (!selectedWord || notesSaving) return;
+    if (notesWordIdRef.current !== selectedWord.id) return;
+    if (notesDraft === (selectedWord.notes || '')) return;
+
+    try {
+      setNotesSaving(true);
+      const response = await vocabularyAPI.updateNotes(selectedWord.id, notesDraft);
+      const updated = response.data.data as Vocabulary;
+      setVocabulary((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setNotesSaved(true);
+      setTimeout(() => setNotesSaved(false), 2000);
+    } catch (error) {
+      console.error('Failed to save notes:', error);
+    } finally {
+      setNotesSaving(false);
+    }
+  }, [selectedWord, notesDraft, notesSaving]);
 
   const resetCardState = () => {
     setAnswer('');
@@ -817,6 +850,47 @@ function VocabularyContent() {
                       {selectedWord.context}
                     </p>
                   )}
+                </div>
+
+                {/* Notes */}
+                <div className="rounded-md border border-gray-800 bg-gray-950/40 p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-400">
+                      <FileEdit className="h-3.5 w-3.5" />
+                      我的笔记
+                    </label>
+                    <div className="flex items-center gap-2">
+                      {notesSaved && (
+                        <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400">
+                          <Check className="h-3 w-3" />
+                          已保存
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={saveNotes}
+                        disabled={notesSaving || notesDraft === (selectedWord.notes || '')}
+                        className="rounded border border-gray-700 px-2 py-0.5 text-[11px] font-semibold text-gray-300 transition-colors hover:border-blue-500 hover:text-blue-200 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {notesSaving ? '保存中...' : '保存'}
+                      </button>
+                    </div>
+                  </div>
+                  <textarea
+                    value={notesDraft}
+                    onChange={(event) => setNotesDraft(event.target.value)}
+                    onBlur={saveNotes}
+                    onKeyDown={(event) => {
+                      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+                        event.preventDefault();
+                        saveNotes();
+                      }
+                    }}
+                    placeholder="记录这个词的用法、记忆技巧、易混点..."
+                    rows={4}
+                    className="w-full resize-none rounded border border-gray-800 bg-gray-900/60 px-3 py-2 text-sm leading-6 text-gray-200 outline-none transition-colors placeholder:text-gray-600 focus:border-blue-500"
+                  />
+                  <p className="mt-1.5 text-[11px] text-gray-600">Ctrl + Enter 快速保存</p>
                 </div>
 
                 <div className="grid grid-cols-3 gap-2 text-center text-xs text-gray-500">

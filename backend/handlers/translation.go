@@ -321,6 +321,7 @@ func AddToVocabulary(c *gin.Context) {
 		Definition  string `json:"definition"`
 		Translation string `json:"translation"`
 		Examples    string `json:"examples"`
+		Notes       string `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -352,6 +353,7 @@ func AddToVocabulary(c *gin.Context) {
 		Definition:  req.Definition,
 		Translation: req.Translation,
 		Examples:    req.Examples,
+		Notes:       req.Notes,
 		ReviewEase:  2.5,
 	}
 
@@ -375,6 +377,41 @@ func AddToVocabulary(c *gin.Context) {
 
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Word added to vocabulary",
+		"data":    vocab,
+	})
+}
+
+// UpdateVocabularyNotes 更新单词笔记
+func UpdateVocabularyNotes(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	wordID, ok := parsePathUint(c, "id")
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid word id"})
+		return
+	}
+
+	var req struct {
+		Notes string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var vocab models.Vocabulary
+	if err := database.DB.Where("id = ? AND user_id = ?", wordID, userID).First(&vocab).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Word not found"})
+		return
+	}
+
+	if err := database.DB.Model(&vocab).Update("notes", req.Notes).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update notes"})
+		return
+	}
+	vocab.Notes = req.Notes
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Notes updated",
 		"data":    vocab,
 	})
 }

@@ -53,7 +53,7 @@ function LatestContent() {
           暂无文章
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6">
           {articles.map((article) => (
             <ArticleCard key={article.id} article={article} />
           ))}

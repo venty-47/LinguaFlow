@@ -30,14 +30,20 @@ export default function ArticleCard({ article }: ArticleCardProps) {
   const coverImageURL = article.cover_image ? resolveAPIAssetURL(article.cover_image) : '';
   const shouldBypassImageOptimizer = isRemoteHTTPURL(coverImageURL);
 
+  // Deterministic image height variation based on title length for waterfall effect
+  const titleLen = article.title?.length || 0;
+  const imageHeights = ['h-36', 'h-44', 'h-48', 'h-52', 'h-56', 'h-60'];
+  const imageHeight = imageHeights[titleLen % imageHeights.length];
+  const placeholderHeight = imageHeights[(titleLen + 1) % imageHeights.length];
+
   return (
     <Link
       href={`/articles/${article.slug}`}
-      className="block bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden hover:border-blue-500 transition-all duration-300 group"
+      className="block bg-gray-900/50 border border-gray-800 rounded-lg overflow-hidden hover:border-blue-500 transition-all duration-300 group mb-6 break-inside-avoid"
     >
       {/* Cover Image */}
       {coverImageURL && !imageError ? (
-        <div className="relative h-48 w-full overflow-hidden bg-gray-800">
+        <div className={`relative ${imageHeight} w-full overflow-hidden bg-gray-800`}>
           <Image
             src={coverImageURL}
             alt={article.title}
@@ -48,7 +54,7 @@ export default function ArticleCard({ article }: ArticleCardProps) {
           />
         </div>
       ) : (
-        <div className="h-48 w-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center">
+        <div className={`${placeholderHeight} w-full bg-gradient-to-br from-gray-800 to-gray-900 flex items-center justify-center`}>
           <BookOpen className="w-16 h-16 text-gray-700" />
         </div>
       )}

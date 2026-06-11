@@ -45,6 +45,7 @@ import {
 } from '@/types';
 import TranslationTooltip from '@/components/TranslationTooltip';
 import ArticleLearningPanel from '@/components/ArticleLearningPanel';
+import FavoriteFolderSelect from '@/components/FavoriteFolderSelect';
 import Toast from '@/components/Toast';
 
 const difficultyLabels = {
@@ -523,7 +524,7 @@ export default function ArticlePage() {
   const [readProgress, setReadProgress] = useState(0);
   const [progressCheckpoint, setProgressCheckpoint] = useState(0);
   const [isFavorited, setIsFavorited] = useState(false);
-  const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [currentFolderId, setCurrentFolderId] = useState<number | undefined>();
   const [shareToast, setShareToast] = useState('');
   const [paragraphTranslations, setParagraphTranslations] = useState<
     Record<number, { loading: boolean; text?: string; error?: string }>
@@ -737,7 +738,9 @@ export default function ArticlePage() {
         ]);
         const subscriptions = subscriptionsResponse.data.data as Subscription[];
         const vocabulary = vocabularyResponse.data.data as Vocabulary[];
-        setIsFavorited(subscriptions.some((item) => item.article_id === article.id));
+        const existingSub = subscriptions.find((item) => item.article_id === article.id);
+        setIsFavorited(Boolean(existingSub));
+        setCurrentFolderId(existingSub?.folder_id);
         setVocabularyByWord(
           new Map(
             vocabulary
@@ -936,28 +939,9 @@ export default function ArticlePage() {
     }
   };
 
-  const handleFavoriteArticle = async () => {
-    if (!article) return;
-
-    if (!isAuthenticated) {
-      router.push('/login');
-      return;
-    }
-
-    try {
-      setFavoriteLoading(true);
-      if (isFavorited) {
-        await subscriptionAPI.removeSubscription(article.id);
-        setIsFavorited(false);
-      } else {
-        await subscriptionAPI.addSubscription(article.id);
-        setIsFavorited(true);
-      }
-    } catch (err) {
-      console.error('Failed to update favorite article:', err);
-    } finally {
-      setFavoriteLoading(false);
-    }
+  const handleFavoriteChange = (favorited: boolean, folderId?: number) => {
+    setIsFavorited(favorited);
+    setCurrentFolderId(favorited ? folderId : undefined);
   };
 
   const handleShare = async () => {
@@ -1952,20 +1936,12 @@ export default function ArticlePage() {
                   {showChinese ? '隐藏译文' : '译文'}
                 </button>
               )}
-              <button
-                onClick={handleFavoriteArticle}
-                disabled={favoriteLoading}
-                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-gray-700 px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-gray-900 disabled:opacity-50"
-              >
-                {favoriteLoading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : isFavorited ? (
-                  <BookmarkCheck className="h-4 w-4 text-yellow-300" />
-                ) : (
-                  <BookmarkPlus className="h-4 w-4" />
-                )}
-                {isFavorited ? '已收藏' : '收藏'}
-              </button>
+              <FavoriteFolderSelect
+                articleId={article.id}
+                isFavorited={isFavorited}
+                currentFolderId={currentFolderId}
+                onFavoriteChange={handleFavoriteChange}
+              />
               <button
                 onClick={handleShare}
                 className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-gray-700 px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-gray-900"

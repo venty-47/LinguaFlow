@@ -5,10 +5,11 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { format } from 'date-fns';
-import { BookmarkCheck, BookmarkPlus, ChevronLeft, Eye, Loader2, Timer } from 'lucide-react';
+import { ChevronLeft, Eye, Loader2, Timer } from 'lucide-react';
 import { articleAPI, isRemoteHTTPURL, resolveAPIAssetURL, subscriptionAPI } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
 import { Article, Subscription } from '@/types';
+import FavoriteFolderSelect from '@/components/FavoriteFolderSelect';
 
 const difficultyLabels = {
   easy: '简单',
@@ -27,7 +28,7 @@ export default function ArticleReadPage() {
   const [error, setError] = useState('');
   const [readProgress, setReadProgress] = useState(0);
   const [isFavorited, setIsFavorited] = useState(false);
-  const [favoriteLoading, setFavoriteLoading] = useState(false);
+  const [currentFolderId, setCurrentFolderId] = useState<number | undefined>();
 
   const contentRef = useRef<HTMLDivElement>(null);
   const activeReadSecondsRef = useRef(0);
@@ -59,7 +60,9 @@ export default function ArticleReadPage() {
       try {
         const response = await subscriptionAPI.getSubscriptions();
         const subscriptions = response.data.data as Subscription[];
-        setIsFavorited(subscriptions.some((item) => item.article_id === article.id));
+        const existingSub = subscriptions.find((item) => item.article_id === article.id);
+        setIsFavorited(Boolean(existingSub));
+        setCurrentFolderId(existingSub?.folder_id);
       } catch (err) {
         console.error('Failed to fetch subscription:', err);
       }
@@ -134,28 +137,9 @@ export default function ArticleReadPage() {
     return () => clearInterval(interval);
   }, [article, isAuthenticated]);
 
-  const handleFavoriteArticle = async () => {
-    if (!article) return;
-
-    if (!isAuthenticated) {
-      router.push('/login');
-      return;
-    }
-
-    try {
-      setFavoriteLoading(true);
-      if (isFavorited) {
-        await subscriptionAPI.removeSubscription(article.id);
-        setIsFavorited(false);
-      } else {
-        await subscriptionAPI.addSubscription(article.id);
-        setIsFavorited(true);
-      }
-    } catch (err) {
-      console.error('Failed to update favorite article:', err);
-    } finally {
-      setFavoriteLoading(false);
-    }
+  const handleFavoriteChange = (favorited: boolean, folderId?: number) => {
+    setIsFavorited(favorited);
+    setCurrentFolderId(favorited ? folderId : undefined);
   };
 
   if (loading) {
@@ -239,20 +223,12 @@ export default function ArticleReadPage() {
               </span>
             </div>
 
-            <button
-              onClick={handleFavoriteArticle}
-              disabled={favoriteLoading}
-              className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-md border border-gray-700 px-3 py-2 text-sm font-semibold text-gray-300 hover:bg-gray-900 disabled:opacity-50"
-            >
-              {favoriteLoading ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : isFavorited ? (
-                <BookmarkCheck className="h-4 w-4 text-yellow-300" />
-              ) : (
-                <BookmarkPlus className="h-4 w-4" />
-              )}
-              {isFavorited ? '已收藏' : '收藏'}
-            </button>
+            <FavoriteFolderSelect
+              articleId={article.id}
+              isFavorited={isFavorited}
+              currentFolderId={currentFolderId}
+              onFavoriteChange={handleFavoriteChange}
+            />
           </div>
         </header>
 

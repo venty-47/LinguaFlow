@@ -575,7 +575,6 @@ export default function ArticlePage() {
   const lastReadingSignalRef = useRef(0);
   const readProgressRef = useRef(0);
   const lastSyncedProgressRef = useRef(0);
-  const highlightRef = useRef<HTMLElement | null>(null);
   const sentenceElementRefs = useRef<Record<string, HTMLSpanElement | null>>({});
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const ttsRequestIdRef = useRef(0);
@@ -915,33 +914,17 @@ export default function ArticlePage() {
   ]);
 
   const clearHighlight = () => {
-    const highlight = highlightRef.current;
-    if (!highlight) return;
-
-    const parent = highlight.parentNode;
-    if (!parent) {
-      highlightRef.current = null;
-      return;
-    }
-
-    while (highlight.firstChild) {
-      parent.insertBefore(highlight.firstChild, highlight);
-    }
-    parent.removeChild(highlight);
-    parent.normalize();
-    highlightRef.current = null;
+    window.getSelection()?.removeAllRanges();
   };
 
   const applyHighlight = (range: Range) => {
     clearHighlight();
 
-    const mark = document.createElement('mark');
-    mark.className = 'reading-selection-highlight';
-
     try {
-      range.surroundContents(mark);
-      highlightRef.current = mark;
-      window.getSelection()?.removeAllRanges();
+      const selection = window.getSelection();
+      if (selection) {
+        selection.addRange(range);
+      }
       return true;
     } catch (err) {
       console.error('Failed to apply highlight:', err);
@@ -1039,8 +1022,9 @@ export default function ArticlePage() {
     paragraph: string
   ) => {
     markReadingActive();
-    const selected = window.getSelection()?.toString().trim();
-    if (selected) return;
+    // Clear previous native selection (from a prior word click) so we can detect
+    // drag-selections in handleTextSelection on the next mouseup
+    window.getSelection()?.removeAllRanges();
 
     const match = getWordMatchFromPoint(event.clientX, event.clientY);
     if (!match) return;
@@ -2575,6 +2559,7 @@ export default function ArticlePage() {
             existingVocabulary={selectedVocabulary}
             onAskAI={(text) => askAssistantAboutText(text, tooltipContext)}
             onWordAdded={(word) => {
+              clearHighlight();
               const normalized = normalizeWord(word);
               if (!normalized) return;
               setVocabularyByWord((prev) => {
@@ -2594,6 +2579,7 @@ export default function ArticlePage() {
                 });
                 return next;
               });
+              setShowTranslation(false);
             }}
             onVocabularyReviewed={(vocabulary) => {
               const normalized = normalizeWord(vocabulary.word);

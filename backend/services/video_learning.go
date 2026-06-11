@@ -55,10 +55,13 @@ type Transcript struct {
 }
 
 type TranscriptSegment struct {
-	Start      float64 `json:"start"`
-	End        float64 `json:"end"`
-	Text       string  `json:"text"`
-	Confidence float64 `json:"confidence,omitempty"`
+	Start            float64 `json:"start"`
+	End              float64 `json:"end"`
+	Text             string  `json:"text"`
+	Confidence       float64 `json:"confidence,omitempty"`
+	AvgLogprob       float64 `json:"avg_logprob,omitempty"`
+	NoSpeechProb     float64 `json:"no_speech_prob,omitempty"`
+	CompressionRatio float64 `json:"compression_ratio,omitempty"`
 }
 
 type openAITranscriptionResponse struct {
@@ -506,10 +509,13 @@ func (s *VideoLearningService) transcribe(ctx context.Context, audioPath, langua
 			confidence = 1 / (1 + (-segment.AvgLogprob))
 		}
 		transcript.Segments = append(transcript.Segments, TranscriptSegment{
-			Start:      segment.Start,
-			End:        segment.End,
-			Text:       text,
-			Confidence: confidence,
+			Start:            segment.Start,
+			End:              segment.End,
+			Text:             text,
+			Confidence:       confidence,
+			AvgLogprob:       segment.AvgLogprob,
+			NoSpeechProb:     segment.NoSpeechProb,
+			CompressionRatio: segment.CompressionRatio,
 		})
 	}
 	return transcript, nil
@@ -542,7 +548,7 @@ func BuildVideoSubtitles(lessonID uint, transcript *Transcript, duration float64
 		return nil
 	}
 
-	segments := transcript.Segments
+	segments := filterTranscriptHallucinations(transcript.Segments)
 	if len(segments) == 0 && strings.TrimSpace(transcript.Text) != "" {
 		segments = splitTranscriptText(transcript.Text, duration)
 	}
@@ -582,6 +588,52 @@ func BuildVideoSubtitles(lessonID uint, transcript *Transcript, duration float64
 		subtitles[i].SortOrder = i + 1
 	}
 	return subtitles
+}
+
+func filterTranscriptHallucinations(segments []TranscriptSegment) []TranscriptSegment {
+	if len(segments) == 0 {
+		return nil
+	}
+
+	filtered := make([]TranscriptSegment, 0, len(segments))
+	lastKey := ""
+	repeatCount := 0
+
+	for _, segment := range segments {
+		text := cleanSubtitleText(segment.Text)
+		if text == "" {
+			continue
+		}
+
+		key := normalizeSubtitleDedupeKey(text)
+		if key == "" {
+			continue
+		}
+		if key == lastKey {
+			repeatCount++
+		} else {
+			lastKey = key
+			repeatCount = 1
+		}
+
+		// Whisper may hallucinate by repeating the previous sentence across
+		// long low-speech regions. Consecutive exact repeats are not useful
+		// subtitles, so keep only the first occurrence.
+		if repeatCount > 1 {
+			continue
+		}
+		if segment.NoSpeechProb >= 0.85 && segment.AvgLogprob < -0.5 {
+			continue
+		}
+		if segment.CompressionRatio > 3.0 {
+			continue
+		}
+
+		segment.Text = text
+		filtered = append(filtered, segment)
+	}
+
+	return filtered
 }
 
 func SubtitlesToVTT(subtitles []models.VideoSubtitle) string {
@@ -710,6 +762,12 @@ func cleanSubtitleText(text string) string {
 	text = strings.TrimSpace(text)
 	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
 	return text
+}
+
+func normalizeSubtitleDedupeKey(text string) string {
+	text = strings.ToLower(cleanSubtitleText(text))
+	text = regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(text, " ")
+	return strings.TrimSpace(text)
 }
 
 func estimateCueDuration(text string) float64 {

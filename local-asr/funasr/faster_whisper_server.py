@@ -19,6 +19,16 @@ CPU_THREADS = int(os.getenv("CPU_THREADS", "4"))
 NUM_WORKERS = int(os.getenv("NUM_WORKERS", "1"))
 BEAM_SIZE = int(os.getenv("BEAM_SIZE", "5"))
 VAD_FILTER = os.getenv("VAD_FILTER", "true").lower() in {"1", "true", "yes", "on"}
+VAD_MIN_SILENCE_MS = int(os.getenv("VAD_MIN_SILENCE_MS", "500"))
+CONDITION_ON_PREVIOUS_TEXT = os.getenv("CONDITION_ON_PREVIOUS_TEXT", "false").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+NO_SPEECH_THRESHOLD = float(os.getenv("NO_SPEECH_THRESHOLD", "0.6"))
+LOG_PROB_THRESHOLD = float(os.getenv("LOG_PROB_THRESHOLD", "-1.0"))
+COMPRESSION_RATIO_THRESHOLD = float(os.getenv("COMPRESSION_RATIO_THRESHOLD", "2.4"))
 
 app = FastAPI(title="GuGuDu faster-whisper ASR", version="0.1.0")
 model: WhisperModel | None = None
@@ -74,8 +84,13 @@ async def transcribe(
             initial_prompt=prompt or None,
             beam_size=BEAM_SIZE,
             vad_filter=VAD_FILTER,
+            vad_parameters={"min_silence_duration_ms": VAD_MIN_SILENCE_MS},
             temperature=temperature,
             word_timestamps=word_timestamps,
+            condition_on_previous_text=CONDITION_ON_PREVIOUS_TEXT,
+            no_speech_threshold=NO_SPEECH_THRESHOLD,
+            log_prob_threshold=LOG_PROB_THRESHOLD,
+            compression_ratio_threshold=COMPRESSION_RATIO_THRESHOLD,
         )
         print(
             "[ASR] started "

@@ -26,17 +26,22 @@
 
 ## 2. 当前代码基础
 
-仓库已有一些视频学习相关痕迹，但实现不完整：
+仓库已有视频学习相关实现，但仍有可继续完善的功能：
 
 - `backend/config.toml.example` 和 `backend/config.docker.toml` 已有 `[video_learning]` 配置块，包含视频、音频、transcript 存储目录和 ASR provider 配置。
+- `backend/config/config.go` 已有 `VideoLearningConfig` 配置结构。
+- `backend/models/models.go` 已有 `VideoLesson` 和 `VideoSubtitle` GORM 模型。
+- `backend/handlers/video_learning.go` 和 `backend/services/video_learning.go` 已包含上传、列表、详情、删除、重新生成字幕、字幕列表、VTT 输出和播放进度能力。
+- `backend/main.go` 已注册 `/api/video-lessons` 相关登录接口。
 - `frontend/src/types/index.ts` 已有 `VideoLesson`、`VideoSubtitle` 类型。
+- `frontend/src/lib/api.ts` 已有 `videoLessonAPI`。
+- `frontend/src/app/study/videos/page.tsx` 和 `frontend/src/app/study/videos/[id]/page.tsx` 已有视频学习列表和播放页。
 - `frontend/src/app/globals.css` 已有 `.video-learning-player` 和 `video::cue` 样式。
 - `backend/storage/video-audio/`、`backend/storage/video-transcripts/`、`backend/storage/videos/` 有本地样例文件。
-- 当前 `backend/config/config.go` 尚未把 `[video_learning]` 加进 `Config` 结构。
-- 当前后端未发现 `VideoLesson` / `VideoSubtitle` GORM 模型、handler、service、路由注册。
-- 当前前端未发现 `/study/videos` 页面实现，Header 已有“视频学习”入口。
 
-结论：应按已有命名和目录继续补齐 `video_learning` 领域，而不是另起一个不兼容模块。
+仍待完善的重点包括：字幕翻译、字幕编辑、导入/导出、任务队列恢复能力、更多学习记录统计。双语字幕专项设计见 [视频双语字幕功能实现文档](./video-bilingual-subtitles.md)。
+
+结论：后续应继续沿用现有 `video_learning` 领域和 `VideoSubtitle.translation` 字段扩展，而不是另起一个不兼容模块。
 
 ## 3. 总体架构
 

@@ -70,6 +70,15 @@ func Register(c *gin.Context) {
 		return
 	}
 
+	defaultFolder := models.FavoriteFolder{
+		UserID:    user.ID,
+		Name:      "默认收藏夹",
+		Icon:      "folder",
+		SortOrder: 0,
+		IsDefault: true,
+	}
+	database.DB.Create(&defaultFolder)
+
 	// 生成 JWT token
 	token, err := generateToken(user.ID, user.Username)
 	if err != nil {

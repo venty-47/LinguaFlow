@@ -210,7 +210,7 @@ type Subscription struct {
 
 	UserID    uint `gorm:"not null;index" json:"user_id"`
 	ArticleID uint `gorm:"not null;index" json:"article_id"`
-	FolderID  uint `gorm:"not null;index" json:"folder_id"`
+	FolderID  uint `gorm:"index" json:"folder_id"`
 
 	User    User           `gorm:"foreignKey:UserID" json:"user,omitempty"`
 	Article Article        `gorm:"foreignKey:ArticleID" json:"article,omitempty"`

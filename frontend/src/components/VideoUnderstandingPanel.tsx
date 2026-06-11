@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Bot, Lightbulb, Loader2, MessageSquare, Plus, Send, Sparkles, Target, Trash2 } from 'lucide-react';
 import { vocabularyAPI, videoLessonAPI } from '@/lib/api';
 import { formatVideoTime } from '@/lib/videoSubtitles';
@@ -20,6 +20,15 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'summary' | 'keypoints' | 'vocab' | 'chat'>('summary');
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [conversations]);
 
   const loadUnderstanding = useCallback(async () => {
     try {
@@ -74,7 +83,22 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
 
     const userMessage = message.trim();
     setMessage('');
+
+    const optimisticUserMsg: VideoConversationMessage = {
+      id: Date.now(),
+      role: 'user',
+      content: userMessage,
+      created_at: new Date().toISOString(),
+    };
+
+    setConversations(prev => [...prev, optimisticUserMsg, {
+      id: Date.now() + 1,
+      role: 'assistant',
+      content: '',
+      created_at: new Date().toISOString()
+    }]);
     setSending(true);
+    setError('');
 
     try {
       const messages = [
@@ -82,10 +106,21 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
         { role: 'user' as const, content: userMessage },
       ];
 
-      const response = await videoLessonAPI.chatWithVideo(lesson.id, messages);
+      await videoLessonAPI.chatWithVideoStream(lesson.id, messages, (delta) => {
+        setConversations(prev => {
+          const newConvs = [...prev];
+          newConvs[newConvs.length - 1] = {
+            ...newConvs[newConvs.length - 1],
+            content: newConvs[newConvs.length - 1].content + delta
+          };
+          return newConvs;
+        });
+      });
+
       await loadConversations();
     } catch (err: any) {
-      setError(err.response?.data?.error || '发送失败');
+      setError(err.message || '发送失败');
+      setConversations(prev => prev.slice(0, -2));
     } finally {
       setSending(false);
     }
@@ -309,50 +344,70 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
             )}
           </div>
 
-          <div className="max-h-96 space-y-3 overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900">
-            {conversations.length === 0 ? (
-              <div className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-                <Bot className="mx-auto mb-2 h-8 w-8 text-gray-400" />
-                向 AI 提问视频相关内容
-              </div>
-            ) : (
-              conversations.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`rounded-lg p-3 ${
-                    msg.role === 'user'
-                      ? 'ml-8 bg-teal-600 text-white'
-                      : 'mr-8 bg-white dark:bg-gray-800'
-                  }`}
-                >
-                  <p className="text-sm leading-6">{msg.content}</p>
+          <div className="flex h-[500px] flex-col rounded-lg border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900">
+            <div className="flex-1 space-y-3 overflow-y-auto p-4">
+              {conversations.length === 0 ? (
+                <div className="flex h-full items-center justify-center text-center text-sm text-gray-500 dark:text-gray-400">
+                  <div>
+                    <Bot className="mx-auto mb-2 h-8 w-8 text-gray-400" />
+                    向 AI 提问视频相关内容
+                  </div>
                 </div>
-              ))
-            )}
-          </div>
+              ) : (
+                <>
+                  {conversations.map((msg, idx) => (
+                    <div
+                      key={`${msg.id}-${idx}`}
+                      className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      {msg.role === 'assistant' && (
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-100 dark:bg-teal-900/30">
+                          <Bot className="h-4 w-4 text-teal-600 dark:text-teal-400" />
+                        </div>
+                      )}
+                      <div
+                        className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+                          msg.role === 'user'
+                            ? 'bg-teal-600 text-white'
+                            : 'bg-white text-gray-900 dark:bg-gray-800 dark:text-gray-100'
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap text-sm leading-6">
+                          {msg.content || (sending ? '思考中...' : '...')}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                  <div ref={chatEndRef} />
+                </>
+              )}
+            </div>
 
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSendMessage();
-                }
-              }}
-              placeholder="询问视频相关问题..."
-              disabled={sending}
-              className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-            />
-            <button
-              onClick={handleSendMessage}
-              disabled={sending || !message.trim()}
-              className="rounded-md bg-teal-600 px-4 py-2 text-white hover:bg-teal-700 disabled:opacity-60"
-            >
-              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </button>
+            <div className="border-t border-gray-200 p-3 dark:border-gray-800">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="询问视频相关问题..."
+                  disabled={sending}
+                  className="flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-teal-600 focus:outline-none focus:ring-1 focus:ring-teal-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                />
+                <button
+                  onClick={handleSendMessage}
+                  disabled={sending || !message.trim()}
+                  className="rounded-md bg-teal-600 px-4 py-2 text-white hover:bg-teal-700 disabled:opacity-60"
+                >
+                  {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -165,6 +165,7 @@ func ChatWithVideo(c *gin.Context) {
 
 	var req struct {
 		Messages []services.ChatMessage `json:"messages"`
+		Stream   bool                   `json:"stream"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求"})
@@ -183,19 +184,50 @@ func ChatWithVideo(c *gin.Context) {
 		return
 	}
 
-	response, err := videoUnderstandingService.ChatWithVideo(
-		c.Request.Context(),
-		lesson,
-		understanding,
-		req.Messages,
-		userID,
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+	if req.Stream {
+		c.Header("Content-Type", "text/event-stream")
+		c.Header("Cache-Control", "no-cache")
+		c.Header("Connection", "keep-alive")
+		c.Header("X-Accel-Buffering", "no")
 
-	c.JSON(http.StatusOK, gin.H{"data": gin.H{"content": response}})
+		c.Status(http.StatusOK)
+		flusher, ok := c.Writer.(http.Flusher)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "流式响应不支持"})
+			return
+		}
+
+		err := videoUnderstandingService.ChatWithVideoStream(
+			c.Request.Context(),
+			lesson,
+			understanding,
+			req.Messages,
+			userID,
+			func(delta string) error {
+				c.SSEvent("message", delta)
+				flusher.Flush()
+				return nil
+			},
+		)
+
+		if err != nil {
+			c.SSEvent("error", err.Error())
+			flusher.Flush()
+		}
+	} else {
+		response, err := videoUnderstandingService.ChatWithVideo(
+			c.Request.Context(),
+			lesson,
+			understanding,
+			req.Messages,
+			userID,
+		)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": gin.H{"content": response}})
+	}
 }
 
 func GetVideoConversations(c *gin.Context) {

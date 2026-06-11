@@ -210,6 +210,57 @@ export const videoLessonAPI = {
     id: number,
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
   ) => api.post(`/video-lessons/${id}/chat`, { messages }),
+  chatWithVideoStream: async (
+    id: number,
+    messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+    onDelta: (delta: string) => void
+  ) => {
+    const response = await fetch(`${API_URL}/video-lessons/${id}/chat`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders(),
+      },
+      body: JSON.stringify({ messages, stream: true }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.error || 'Stream request failed');
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    if (!reader) throw new Error('No response body');
+
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n\n');
+      buffer = lines.pop() || '';
+
+      for (const block of lines) {
+        const eventLine = block.split('\n').find(l => l.startsWith('event:'));
+        const dataLine = block.split('\n').find(l => l.startsWith('data:'));
+
+        if (!eventLine || !dataLine) continue;
+
+        const event = eventLine.substring(6).trim();
+        const data = dataLine.substring(5).trim();
+
+        if (event === 'message' && data) {
+          onDelta(data);
+        } else if (event === 'error') {
+          throw new Error(data);
+        }
+      }
+    }
+  },
   getConversations: (id: number, limit = 50) =>
     api.get(`/video-lessons/${id}/conversations`, { params: { limit } }),
   clearConversations: (id: number) =>

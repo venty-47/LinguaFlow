@@ -177,6 +177,76 @@ func (s *VideoUnderstandingService) ChatWithVideo(
 	return response, nil
 }
 
+func (s *VideoUnderstandingService) ChatWithVideoStream(
+	ctx context.Context,
+	lesson *models.VideoLesson,
+	understanding *models.VideoUnderstanding,
+	messages []ChatMessage,
+	userID uint,
+	onDelta func(string) error,
+) error {
+	if s.aiService == nil {
+		return fmt.Errorf("AI 服务未启用")
+	}
+
+	chatMessages := s.buildChatMessages(understanding, messages)
+	fullResponse := ""
+
+	err := s.aiService.DiscussArticleStream(
+		understanding.SummaryEN,
+		understanding.SummaryCN,
+		"",
+		chatMessages,
+		func(delta string) error {
+			fullResponse += delta
+			return onDelta(delta)
+		},
+	)
+
+	if err != nil {
+		return err
+	}
+
+	for _, msg := range messages {
+		if msg.Role == "user" {
+			s.db.WithContext(ctx).Create(&models.VideoConversation{
+				VideoLessonID: lesson.ID,
+				UserID:        userID,
+				Role:          msg.Role,
+				Content:       msg.Content,
+				TokensUsed:    estimateTokens(msg.Content),
+			})
+		}
+	}
+
+	s.db.WithContext(ctx).Create(&models.VideoConversation{
+		VideoLessonID: lesson.ID,
+		UserID:        userID,
+		Role:          "assistant",
+		Content:       fullResponse,
+		TokensUsed:    estimateTokens(fullResponse),
+	})
+
+	return nil
+}
+
+func (s *VideoUnderstandingService) buildChatMessages(understanding *models.VideoUnderstanding, messages []ChatMessage) []ArticleAssistantMessage {
+	result := []ArticleAssistantMessage{
+		{Role: "assistant", Content: "我已了解这个视频的内容。你可以问我视频观点、语言学习点或相关问题。"},
+	}
+
+	for _, msg := range messages {
+		if msg.Role == "user" || msg.Role == "assistant" {
+			result = append(result, ArticleAssistantMessage{
+				Role:    msg.Role,
+				Content: msg.Content,
+			})
+		}
+	}
+
+	return result
+}
+
 func (s *VideoUnderstandingService) GetConversations(ctx context.Context, lessonID, userID uint, limit int) ([]models.VideoConversation, error) {
 	var conversations []models.VideoConversation
 	err := s.db.WithContext(ctx).

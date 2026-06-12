@@ -2630,7 +2630,15 @@ export default function ArticlePage() {
                 });
                 return next;
               });
-              setShowTranslation(false);
+            }}
+            onWordRemoved={(word) => {
+              const normalized = normalizeWord(word);
+              if (!normalized) return;
+              setVocabularyByWord((prev) => {
+                const next = new Map(prev);
+                next.delete(normalized);
+                return next;
+              });
             }}
             onVocabularyReviewed={(vocabulary) => {
               const normalized = normalizeWord(vocabulary.word);

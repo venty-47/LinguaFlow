@@ -5,6 +5,7 @@ import { BookOpen, Bot, Lightbulb, Loader2, MessageSquare, Plus, Send, Sparkles,
 import { vocabularyAPI, videoLessonAPI } from '@/lib/api';
 import { formatVideoTime } from '@/lib/videoSubtitles';
 import { VideoConversationMessage, VideoKeyPoint, VideoLesson, VideoUnderstanding, VideoVocabulary } from '@/types';
+import Toast from './Toast';
 
 interface Props {
   lesson: VideoLesson;
@@ -20,6 +21,7 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<'summary' | 'keypoints' | 'vocab' | 'chat'>('summary');
+  const [toastMessage, setToastMessage] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -133,9 +135,9 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
         translation: vocab.translation,
         context: vocab.context,
       });
-      alert(`「${vocab.word}」已加入生词本`);
+      setToastMessage(`「${vocab.word}」已加入生词本`);
     } catch (err: any) {
-      alert(err.response?.data?.error || '添加失败');
+      setToastMessage(err.response?.data?.error || '添加失败');
     }
   };
 
@@ -194,6 +196,7 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
 
   return (
     <div className="space-y-4">
+      {toastMessage && <Toast message={toastMessage} onClose={() => setToastMessage('')} />}
       <div className="flex items-center gap-2 border-b border-gray-200 dark:border-gray-800">
         <button
           onClick={() => setActiveTab('summary')}

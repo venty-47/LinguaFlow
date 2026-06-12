@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { translationAPI, vocabularyAPI } from '@/lib/api';
 import { Vocabulary } from '@/types';
-import { Bot, BookmarkCheck, BookmarkPlus, Check, FileEdit, Loader2, RotateCcw, Volume2 } from 'lucide-react';
+import { Bot, BookmarkCheck, BookmarkPlus, Check, FileEdit, Loader2, RotateCcw, Volume2, X } from 'lucide-react';
 import Toast from './Toast';
 
 type Accent = 'uk' | 'us';
@@ -23,6 +23,7 @@ interface TranslationTooltipProps {
   existingVocabulary?: Vocabulary;
   onAskAI?: (text: string) => void;
   onWordAdded?: (word: string) => void;
+  onWordRemoved?: (word: string) => void;
   onVocabularyReviewed?: (vocabulary: Vocabulary) => void;
 }
 
@@ -36,6 +37,7 @@ export default function TranslationTooltip({
   existingVocabulary,
   onAskAI,
   onWordAdded,
+  onWordRemoved,
   onVocabularyReviewed,
 }: TranslationTooltipProps) {
   const [translation, setTranslation] = useState<string>('');
@@ -50,6 +52,7 @@ export default function TranslationTooltip({
   const [usSpeechUrl, setUsSpeechUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [currentVocabulary, setCurrentVocabulary] = useState<Vocabulary | undefined>(existingVocabulary);
   const [toastMessage, setToastMessage] = useState('');
@@ -247,6 +250,26 @@ export default function TranslationTooltip({
     }
   };
 
+  const handleRemoveFromVocabulary = async () => {
+    if (!currentVocabulary) return;
+    try {
+      setRemoving(true);
+      await vocabularyAPI.deleteWord(currentVocabulary.id);
+      const word = currentVocabulary.word.toLowerCase();
+      setCurrentVocabulary(undefined);
+      onWordRemoved?.(word);
+      setToastMessage('已从生词本移除');
+    } catch (error: any) {
+      if (error.response?.status === 401) {
+        setToastMessage('请先登录');
+      } else {
+        setToastMessage('移除失败');
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
   const handleReviewVocabulary = async (rating: 'forgot' | 'hard' | 'good') => {
     if (!currentVocabulary) return;
 
@@ -309,10 +332,23 @@ export default function TranslationTooltip({
               renderSpeechButton('us', '发音', false)
             )}
             {currentVocabulary && (
-              <span className="inline-flex h-6 items-center gap-1 rounded-full bg-teal-700/10 px-2 text-xs font-semibold text-teal-700 dark:bg-teal-300/10 dark:text-teal-200">
-                <BookmarkCheck className="h-3.5 w-3.5" />
-                已在生词本
-              </span>
+              <button
+                onClick={handleRemoveFromVocabulary}
+                disabled={removing || loading}
+                className="group/badge inline-flex h-6 items-center gap-1 rounded-full bg-teal-700/10 px-2 text-xs font-semibold text-teal-700 transition-colors hover:bg-red-50 hover:text-red-600 disabled:opacity-50 dark:bg-teal-300/10 dark:text-teal-200 dark:hover:bg-red-900/20 dark:hover:text-red-400"
+                title="点击移除"
+              >
+                {removing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <>
+                    <BookmarkCheck className="h-3.5 w-3.5 group-hover/badge:hidden" />
+                    <X className="h-3.5 w-3.5 hidden group-hover/badge:inline" />
+                  </>
+                )}
+                <span className="group-hover/badge:hidden">已在生词本</span>
+                <span className="hidden group-hover/badge:inline">移除</span>
+              </button>
             )}
           </div>
 
@@ -478,7 +514,7 @@ export default function TranslationTooltip({
           <>
             <button
               onClick={() => handleReviewVocabulary('forgot')}
-              disabled={reviewing || loading}
+              disabled={reviewing || loading || removing}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-stone-100 px-2.5 text-sm font-medium text-stone-700 transition-colors hover:bg-stone-200 disabled:opacity-50 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700"
               title="忘记"
             >
@@ -487,7 +523,7 @@ export default function TranslationTooltip({
             </button>
             <button
               onClick={() => handleReviewVocabulary('hard')}
-              disabled={reviewing || loading}
+              disabled={reviewing || loading || removing}
               className="inline-flex h-8 items-center rounded-md bg-amber-600 px-2.5 text-sm font-medium text-white transition-colors hover:bg-amber-500 disabled:opacity-50"
               title="模糊"
             >
@@ -495,7 +531,7 @@ export default function TranslationTooltip({
             </button>
             <button
               onClick={() => handleReviewVocabulary('good')}
-              disabled={reviewing || loading}
+              disabled={reviewing || loading || removing}
               className="inline-flex h-8 items-center rounded-md bg-teal-700 px-2.5 text-sm font-medium text-white transition-colors hover:bg-teal-600 disabled:opacity-50"
               title="记得"
             >

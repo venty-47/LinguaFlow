@@ -1108,6 +1108,15 @@ export default function AO3WorkPage() {
                 return next;
               });
             }}
+            onWordRemoved={(word) => {
+              const normalized = normalizeWord(word);
+              if (!normalized) return;
+              setVocabularyByWord((prev) => {
+                const next = new Map(prev);
+                next.delete(normalized);
+                return next;
+              });
+            }}
             onVocabularyReviewed={(vocabulary) => {
               const normalized = normalizeWord(vocabulary.word);
               if (!normalized) return;

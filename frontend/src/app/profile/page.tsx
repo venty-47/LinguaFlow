@@ -18,6 +18,7 @@ import {
   UserCircle,
 } from 'lucide-react';
 import { format } from 'date-fns';
+import Toast from '@/components/Toast';
 
 interface Profile {
   id: number;
@@ -43,6 +44,7 @@ export default function ProfilePage() {
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [error, setError] = useState('');
   const [avatarError, setAvatarError] = useState('');
+  const [avatarSuccess, setAvatarSuccess] = useState('');
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -108,6 +110,7 @@ export default function ProfilePage() {
     try {
       setAvatarUploading(true);
       setAvatarError('');
+      setAvatarSuccess('');
 
       const formData = new FormData();
       formData.append('avatar', file);
@@ -116,6 +119,7 @@ export default function ProfilePage() {
 
       setProfile((current) => (current ? { ...current, avatar } : current));
       updateUser({ avatar });
+      setAvatarSuccess('头像上传成功');
     } catch (err: any) {
       setAvatarError(err.response?.data?.error || '头像上传失败');
     } finally {
@@ -331,6 +335,7 @@ export default function ProfilePage() {
           </div>
         </div>
       </section>
+      {avatarSuccess && <Toast message={avatarSuccess} onClose={() => setAvatarSuccess('')} />}
     </div>
   );
 }

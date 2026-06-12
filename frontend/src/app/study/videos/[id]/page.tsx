@@ -357,7 +357,7 @@ export default function VideoLessonPage() {
             >
             </video>
             {activeSubtitle && subtitleMode !== 'off' && (
-              <div className="pointer-events-none absolute inset-x-3 bottom-4 z-10 flex justify-center">
+              <div className="pointer-events-none absolute inset-x-3 bottom-14 z-10 flex justify-center">
                 <div className="max-w-[92%] rounded-md bg-black/75 px-4 py-2 text-center text-lg font-semibold leading-7 text-white shadow-lg">
                   {subtitleMode === 'en' && <div>{activeSubtitle.text}</div>}
                   {subtitleMode === 'zh' && (

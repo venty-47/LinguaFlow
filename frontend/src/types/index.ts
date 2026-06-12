@@ -105,6 +105,8 @@ export interface KnowledgeGraphNode {
   description?: string;
   weight: number;
   mastery?: number;
+  group?: string;
+  level?: number;
   metadata?: {
     vocabulary_id?: number;
     article_id?: number;
@@ -119,6 +121,10 @@ export interface KnowledgeGraphNode {
     source?: string;
     published_at?: string;
     article_word_count?: number;
+    weak_flag?: boolean;
+    review_scheduled?: boolean;
+    review_date?: string;
+    word?: string;
   };
 }
 
@@ -149,6 +155,14 @@ export interface KnowledgeGraph {
   nodes: KnowledgeGraphNode[];
   edges: KnowledgeGraphEdge[];
   stats: KnowledgeGraphStats;
+  groups?: KnowledgeGraphGroup[];
+}
+
+export interface KnowledgeGraphGroup {
+  id: string;
+  label: string;
+  color: string;
+  node_count: number;
 }
 
 export type VocabularyKnowledgeGraph = KnowledgeGraph;

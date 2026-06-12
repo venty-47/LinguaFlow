@@ -41,6 +41,8 @@ type KnowledgeGraphNodeDTO struct {
 	Description string                 `json:"description,omitempty"`
 	Weight      int                    `json:"weight"`
 	Mastery     *int                   `json:"mastery,omitempty"`
+	Group       string                 `json:"group"`
+	Level       int                    `json:"level"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -68,10 +70,18 @@ type KnowledgeGraphStats struct {
 }
 
 type KnowledgeGraphDTO struct {
-	Focus *KnowledgeGraphNodeDTO  `json:"focus,omitempty"`
-	Nodes []KnowledgeGraphNodeDTO `json:"nodes"`
-	Edges []KnowledgeGraphEdgeDTO `json:"edges"`
-	Stats KnowledgeGraphStats     `json:"stats"`
+	Focus  *KnowledgeGraphNodeDTO  `json:"focus,omitempty"`
+	Nodes  []KnowledgeGraphNodeDTO `json:"nodes"`
+	Edges  []KnowledgeGraphEdgeDTO `json:"edges"`
+	Stats  KnowledgeGraphStats     `json:"stats"`
+	Groups []KnowledgeGraphGroup   `json:"groups"`
+}
+
+type KnowledgeGraphGroup struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Color     string `json:"color"`
+	NodeCount int    `json:"node_count"`
 }
 
 type KnowledgeGraphOverview struct {
@@ -239,6 +249,38 @@ func (s *KnowledgeGraphService) SyncVocabulary(userID uint, vocab models.Vocabul
 
 	now := time.Now()
 	mastery := vocabularyMasteryScore(vocab, now)
+	// Build merged meaning description (Chinese translation + English definition)
+	meaningLabel := firstMeaning(vocab.Translation)
+	meaningDesc := "中文释义"
+	if definition := firstMeaning(vocab.Definition); definition != "" && definition != meaningLabel {
+		if meaningLabel != "" {
+			meaningLabel = meaningLabel + " | " + shortenGraphLabel(definition, 60)
+			meaningDesc = "中英释义"
+		} else {
+			meaningLabel = shortenGraphLabel(definition, 80)
+			meaningDesc = "英文解释"
+		}
+	}
+
+	wordMetadata := map[string]interface{}{
+		"vocabulary_id":   vocab.ID,
+		"word":            vocab.Word,
+		"phonetic":        vocab.Phonetic,
+		"is_learned":      vocab.IsLearned,
+		"review_count":    vocab.ReviewCount,
+		"forgotten_count": vocab.ForgottenCount,
+		"next_review_at":  vocab.NextReviewAt,
+	}
+	// Embed weakness/review flags in word node metadata instead of separate nodes
+	if vocab.ForgottenCount > 0 {
+		wordMetadata["weak_flag"] = true
+		wordMetadata["forgotten_count"] = vocab.ForgottenCount
+	}
+	if vocab.NextReviewAt != nil {
+		wordMetadata["review_scheduled"] = true
+		wordMetadata["review_date"] = vocab.NextReviewAt.Format("2006-01-02")
+	}
+
 	wordNode, err := s.upsertNode(userID, graphNodeInput{
 		Key:                WordNodeKey(vocab.ID),
 		Type:               KnowledgeNodeWord,
@@ -253,26 +295,18 @@ func (s *KnowledgeGraphService) SyncVocabulary(userID uint, vocab models.Vocabul
 		LastSeenAt:         lastSeenFromVocabulary(vocab),
 		NextReviewAt:       vocab.NextReviewAt,
 		StateSource:        "vocabulary",
-		Metadata: map[string]interface{}{
-			"vocabulary_id":   vocab.ID,
-			"word":            vocab.Word,
-			"phonetic":        vocab.Phonetic,
-			"is_learned":      vocab.IsLearned,
-			"review_count":    vocab.ReviewCount,
-			"forgotten_count": vocab.ForgottenCount,
-			"next_review_at":  vocab.NextReviewAt,
-		},
+		Metadata:           wordMetadata,
 	})
 	if err != nil {
 		return err
 	}
 
-	if meaning := firstMeaning(vocab.Translation); meaning != "" {
+	if meaningLabel != "" {
 		meaningNode, err := s.upsertNode(userID, graphNodeInput{
 			Key:                "meaning:" + normalizeGraphID(vocab.Word),
 			Type:               KnowledgeNodeMeaning,
-			Label:              meaning,
-			Description:        "中文释义",
+			Label:              meaningLabel,
+			Description:        meaningDesc,
 			Weight:             78,
 			SourceVocabularyID: &vocab.ID,
 		})
@@ -280,24 +314,6 @@ func (s *KnowledgeGraphService) SyncVocabulary(userID uint, vocab models.Vocabul
 			return err
 		}
 		if err := s.upsertEdge(userID, wordNode.ID, meaningNode.ID, graphEdgeInput{Relation: "defines", Label: "释义", Weight: 92}); err != nil {
-			return err
-		}
-	}
-
-	definition := firstMeaning(vocab.Definition)
-	if definition != "" && definition != firstMeaning(vocab.Translation) {
-		definitionNode, err := s.upsertNode(userID, graphNodeInput{
-			Key:                "definition:" + normalizeGraphID(vocab.Word),
-			Type:               KnowledgeNodeDefinition,
-			Label:              shortenGraphLabel(definition, 80),
-			Description:        "英文解释",
-			Weight:             62,
-			SourceVocabularyID: &vocab.ID,
-		})
-		if err != nil {
-			return err
-		}
-		if err := s.upsertEdge(userID, wordNode.ID, definitionNode.ID, graphEdgeInput{Relation: "explains", Label: "解释", Weight: 72}); err != nil {
 			return err
 		}
 	}
@@ -332,9 +348,6 @@ func (s *KnowledgeGraphService) SyncVocabulary(userID uint, vocab models.Vocabul
 			if err := s.upsertEdge(userID, contextNode.ID, grammarNode.ID, graphEdgeInput{Relation: "has_grammar", Label: "语法", Weight: 54}); err != nil {
 				return err
 			}
-			if err := s.upsertEdge(userID, wordNode.ID, grammarNode.ID, graphEdgeInput{Relation: "used_with_grammar", Label: "句法环境", Weight: 42}); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -361,45 +374,6 @@ func (s *KnowledgeGraphService) SyncVocabulary(userID uint, vocab models.Vocabul
 			return err
 		}
 		if err := s.upsertEdge(userID, wordNode.ID, articleNode.ID, graphEdgeInput{Relation: "appears_in", Label: "来源文章", Weight: 96}); err != nil {
-			return err
-		}
-	}
-
-	if vocab.ForgottenCount > 0 {
-		weakNode, err := s.upsertNode(userID, graphNodeInput{
-			Key:                fmt.Sprintf("weak:%d", vocab.ID),
-			Type:               KnowledgeNodeWeakness,
-			Label:              fmt.Sprintf("忘记 %d 次", vocab.ForgottenCount),
-			Description:        "这个词需要优先复习",
-			Weight:             min(100, 52+vocab.ForgottenCount*12),
-			SourceVocabularyID: &vocab.ID,
-			Familiarity:        max(0, 45-vocab.ForgottenCount*10),
-			MistakeCount:       vocab.ForgottenCount,
-			StateSource:        "weak_signal",
-		})
-		if err != nil {
-			return err
-		}
-		if err := s.upsertEdge(userID, wordNode.ID, weakNode.ID, graphEdgeInput{Relation: "weak_signal", Label: "薄弱点", Weight: 84}); err != nil {
-			return err
-		}
-	}
-
-	if vocab.NextReviewAt != nil {
-		reviewNode, err := s.upsertNode(userID, graphNodeInput{
-			Key:                fmt.Sprintf("review:%d", vocab.ID),
-			Type:               KnowledgeNodeReview,
-			Label:              "下次复习",
-			Description:        vocab.NextReviewAt.Format("2006-01-02"),
-			Weight:             48,
-			SourceVocabularyID: &vocab.ID,
-			NextReviewAt:       vocab.NextReviewAt,
-			StateSource:        "review_schedule",
-		})
-		if err != nil {
-			return err
-		}
-		if err := s.upsertEdge(userID, wordNode.ID, reviewNode.ID, graphEdgeInput{Relation: "scheduled_review", Label: "复习计划", Weight: 58}); err != nil {
 			return err
 		}
 	}
@@ -1865,11 +1839,35 @@ func (s *KnowledgeGraphService) buildDTO(userID uint, nodesByID map[uint]models.
 		focusDTO = &dto
 	}
 
+	// Compute groups from nodes
+	groupCounts := make(map[string]int)
+	for _, n := range nodes {
+		groupCounts[n.Group]++
+	}
+	groupDefs := []struct{ id, label, color string }{
+		{"vocabulary", "单词词汇", "#3b82f6"},
+		{"context", "语境语法", "#8b5cf6"},
+		{"article", "文章主题", "#f59e0b"},
+		{"study", "学习状态", "#ef4444"},
+	}
+	groups := make([]KnowledgeGraphGroup, 0, len(groupDefs))
+	for _, g := range groupDefs {
+		if count, ok := groupCounts[g.id]; ok && count > 0 {
+			groups = append(groups, KnowledgeGraphGroup{
+				ID:        g.id,
+				Label:     g.label,
+				Color:     g.color,
+				NodeCount: count,
+			})
+		}
+	}
+
 	return KnowledgeGraphDTO{
-		Focus: focusDTO,
-		Nodes: nodes,
-		Edges: edges,
-		Stats: stats,
+		Focus:  focusDTO,
+		Nodes:  nodes,
+		Edges:  edges,
+		Stats:  stats,
+		Groups: groups,
 	}, nil
 }
 
@@ -1927,6 +1925,32 @@ func (s *KnowledgeGraphService) nodesToDTO(userID uint, nodes []models.Knowledge
 	return result, nil
 }
 
+func nodeGroup(nodeType string) string {
+	switch nodeType {
+	case KnowledgeNodeWord, KnowledgeNodeMeaning, KnowledgeNodeDefinition, KnowledgeNodeExample:
+		return "vocabulary"
+	case KnowledgeNodeContext, KnowledgeNodeGrammar:
+		return "context"
+	case KnowledgeNodeArticle, KnowledgeNodeTopic:
+		return "article"
+	case KnowledgeNodeWeakness, KnowledgeNodeReview:
+		return "study"
+	default:
+		return "other"
+	}
+}
+
+func nodeLevel(nodeType string) int {
+	switch nodeType {
+	case KnowledgeNodeWord:
+		return 0
+	case KnowledgeNodeMeaning, KnowledgeNodeDefinition, KnowledgeNodeContext, KnowledgeNodeExample:
+		return 1
+	default:
+		return 2
+	}
+}
+
 func nodeDTO(node models.KnowledgeNode, state models.UserKnowledgeState) KnowledgeGraphNodeDTO {
 	metadata := decodeMetadata(node.Metadata)
 	dto := KnowledgeGraphNodeDTO{
@@ -1936,6 +1960,8 @@ func nodeDTO(node models.KnowledgeNode, state models.UserKnowledgeState) Knowled
 		Label:       node.Label,
 		Description: node.Description,
 		Weight:      node.Weight,
+		Group:       nodeGroup(node.Type),
+		Level:       nodeLevel(node.Type),
 		Metadata:    metadata,
 	}
 	if state.ID != 0 {

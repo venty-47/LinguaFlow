@@ -204,7 +204,7 @@ func processBook(book *wordBookJSON, refs []entryRef, dict *services.BaiduDictio
 				e := &book.Units[ref.unitIdx].Entries[ref.entryIdx]
 				word := e.Word
 
-				result, err := dict.LookupWord(word)
+				result, err := dict.LookupWord(word, "")
 				if err != nil {
 					done := updatedCount.Load()
 					log.Printf("[%d/%d] ✗ %-20s %v", done, total, word, err)

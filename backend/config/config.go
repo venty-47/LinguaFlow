@@ -29,6 +29,8 @@ type TranslationConfig struct {
 	BaiduDictSecretKey string `toml:"baidu_dict_secret_key"`
 	YoudaoAppKey       string `toml:"youdao_appkey"`
 	YoudaoAppSecret    string `toml:"youdao_appsecret"`
+	EliaschenDictURL   string `toml:"eliaschen_dict_url"`
+	EliaschenDictProxy string `toml:"eliaschen_dict_proxy"`
 }
 
 type AIConfig struct {

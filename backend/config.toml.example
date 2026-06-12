@@ -33,6 +33,12 @@ baidu_dict_secret_key = ""
 youdao_appkey = ""
 youdao_appsecret = ""
 
+# Eliaschen 英汉词典 API (免费，无需密钥)
+# 词典 API 地址，留空则不启用
+eliaschen_dict_url = "https://dictionary-api.eliaschen.dev"
+# 可选代理地址。Cambridge 英英模式需要代理才能访问
+eliaschen_dict_proxy = ""
+
 [ai]
 enabled = false
 # MiMo OpenAI-compatible chat completions base URL

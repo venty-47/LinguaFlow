@@ -141,7 +141,7 @@ func NewBaiduDictionaryService(apiKey, secretKey string) *BaiduDictionaryService
 	}
 }
 
-func (s *BaiduDictionaryService) LookupWord(word string) (*DictionaryResult, error) {
+func (s *BaiduDictionaryService) LookupWord(word string, _ string) (*DictionaryResult, error) {
 	token, err := s.getAccessToken()
 	if err != nil {
 		return nil, err

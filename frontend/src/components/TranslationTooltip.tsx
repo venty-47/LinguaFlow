@@ -7,6 +7,7 @@ import { Bot, BookmarkCheck, BookmarkPlus, Check, FileEdit, Loader2, RotateCcw, 
 import Toast from './Toast';
 
 type Accent = 'uk' | 'us';
+type DictMode = 'en-cn' | 'en';
 
 type DictionaryDefinition = {
   pos?: string;
@@ -60,6 +61,7 @@ export default function TranslationTooltip({
   const [notesEditing, setNotesEditing] = useState(false);
   const [notesSaving, setNotesSaving] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [dictMode, setDictMode] = useState<DictMode>('en-cn');
   const tooltipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -88,6 +90,7 @@ export default function TranslationTooltip({
           const response = await translationAPI.lookupWord(selectedText, {
             article_id: articleId,
             context,
+            dict_mode: dictMode,
           });
           const data = response.data.data;
 
@@ -147,7 +150,7 @@ export default function TranslationTooltip({
     if (selectedText) {
       fetchResult();
     }
-  }, [articleId, context, mode, selectedText]);
+  }, [articleId, context, dictMode, mode, selectedText]);
 
   const getAccentTitle = (accent: Accent) => {
     return accent === 'uk' ? '英音发音' : '美音发音';
@@ -328,6 +331,33 @@ export default function TranslationTooltip({
             <span className="text-lg font-semibold leading-none text-stone-950 dark:text-stone-50">
               {selectedText}
             </span>
+            {mode === 'dictionary' && (
+              <div className="flex items-center rounded-md border border-stone-200 text-xs dark:border-stone-700">
+                <button
+                  onClick={() => setDictMode('en-cn')}
+                  className={`rounded-l-md px-2 py-1 transition-colors ${
+                    dictMode === 'en-cn'
+                      ? 'bg-teal-700 text-white'
+                      : 'bg-stone-50 text-stone-500 hover:bg-stone-100 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700'
+                  }`}
+                >
+                  英中
+                </button>
+                <button
+                  onClick={() => setDictMode('en')}
+                  className={`rounded-r-md px-2 py-1 transition-colors ${
+                    dictMode === 'en'
+                      ? 'bg-teal-700 text-white'
+                      : 'bg-stone-50 text-stone-500 hover:bg-stone-100 dark:bg-stone-800 dark:text-stone-400 dark:hover:bg-stone-700'
+                  }`}
+                >
+                  英英
+                </button>
+              </div>
+            )}
+            {dictMode === 'en' && mode === 'dictionary' && (
+              <span className="text-[11px] text-amber-600 dark:text-amber-400">Cambridge</span>
+            )}
             {showGenericSpeech && (
               renderSpeechButton('us', '发音', false)
             )}

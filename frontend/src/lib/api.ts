@@ -153,7 +153,7 @@ export const adminArticleAPI = {
 export const translationAPI = {
   translate: (data: { text: string; target_lang: string; source_lang?: string; article_id?: number; context?: string }) =>
     api.post('/translate', data),
-  lookupWord: (word: string, params?: { article_id?: number; context?: string }) =>
+  lookupWord: (word: string, params?: { article_id?: number; context?: string; dict_mode?: string }) =>
     api.get('/dictionary', { params: { word, ...params } }),
   analyzeSentence: (text: string, data?: { article_id?: number; context?: string }) =>
     api.post('/sentences/analyze', { text, ...data }),

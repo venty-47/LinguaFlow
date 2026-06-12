@@ -118,7 +118,7 @@ func main() {
 				entry := &data.Units[ref.unitIdx].Entries[ref.entryIdx]
 				word := entry.Word
 
-				result, err := dict.LookupWord(word)
+				result, err := dict.LookupWord(word, "")
 				if err != nil {
 					failedCount.Add(1)
 					done := failedCount.Load() + fixedCount.Load()

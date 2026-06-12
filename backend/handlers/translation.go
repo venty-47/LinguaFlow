@@ -25,7 +25,7 @@ var translationService *services.TranslationService
 var dictionaryService wordLookupService
 
 type wordLookupService interface {
-	LookupWord(word string) (*services.DictionaryResult, error)
+	LookupWord(word string, dictMode string) (*services.DictionaryResult, error)
 }
 
 type vocabularyExercise struct {
@@ -65,7 +65,7 @@ func recordArticleStudyEvent(c *gin.Context, eventType string, articleID *uint, 
 }
 
 // InitTranslationService 初始化翻译服务
-func InitTranslationService(baiduAppID, baiduSecret, baiduDictAPIKey, baiduDictSecretKey, youdaoAppKey, youdaoAppSecret string) {
+func InitTranslationService(baiduAppID, baiduSecret, baiduDictAPIKey, baiduDictSecretKey, youdaoAppKey, youdaoAppSecret, eliaschenDictURL, eliaschenDictProxy string) {
 	translationService = services.NewTranslationService()
 
 	fmt.Printf("初始化翻译服务...\n")
@@ -80,8 +80,18 @@ func InitTranslationService(baiduAppID, baiduSecret, baiduDictAPIKey, baiduDictS
 		fmt.Println("✓ 百度翻译已初始化")
 	}
 
-	// 优先使用百度智能云文本翻译-词典版
-	if baiduDictAPIKey != "" && baiduDictSecretKey != "" {
+	// 优先使用 Eliaschen 词典（免费、数据丰富）
+	if eliaschenDictURL != "" {
+		dictionaryService = services.NewEliaschenDictionaryService(eliaschenDictURL, eliaschenDictProxy)
+		fmt.Printf("✓ Eliaschen 词典已初始化")
+		if eliaschenDictProxy != "" {
+			fmt.Printf("（代理：%s）", eliaschenDictProxy)
+		}
+		fmt.Println()
+	}
+
+	// 其次使用百度智能云文本翻译-词典版
+	if dictionaryService == nil && baiduDictAPIKey != "" && baiduDictSecretKey != "" {
 		dictionaryService = services.NewBaiduDictionaryService(baiduDictAPIKey, baiduDictSecretKey)
 		fmt.Println("✓ 百度词典版已初始化")
 	}
@@ -231,10 +241,15 @@ func LookupWord(c *gin.Context) {
 		return
 	}
 
+	dictMode := c.Query("dict_mode")
+	if dictMode == "" {
+		dictMode = "en-cn"
+	}
+
 	articleID := parseOptionalUintPointer(c.Query("article_id"))
 	contextText := strings.TrimSpace(c.Query("context"))
 
-	if result, ok := getDictionaryCache(word); ok {
+	if result, ok := getDictionaryCache(word, dictMode); ok {
 		recordArticleStudyEvent(c, services.StudyEventDictionary, articleID, word, result.Translation, contextText, map[string]any{
 			"provider": "cache",
 			"cached":   true,
@@ -245,9 +260,9 @@ func LookupWord(c *gin.Context) {
 
 	// 如果配置了词典服务，使用真实的词典服务
 	if dictionaryService != nil {
-		result, err := dictionaryService.LookupWord(word)
+		result, err := dictionaryService.LookupWord(word, dictMode)
 		if err == nil && result.Error == "" {
-			saveDictionaryCache(word, "dictionary", result)
+			saveDictionaryCache(word, "dictionary", dictMode, result)
 			recordArticleStudyEvent(c, services.StudyEventDictionary, articleID, word, result.Translation, contextText, map[string]any{
 				"provider": "dictionary",
 				"cached":   false,
@@ -289,7 +304,7 @@ func LookupWord(c *gin.Context) {
 					{"definition": translation}, // 基本翻译
 				},
 			}
-			saveDictionaryCache(word, provider, dictionaryResultFromMap(result))
+			saveDictionaryCache(word, provider, dictMode, dictionaryResultFromMap(result))
 			recordArticleStudyEvent(c, services.StudyEventDictionary, articleID, word, translation, contextText, map[string]any{
 				"provider": provider,
 				"cached":   false,
@@ -301,7 +316,7 @@ func LookupWord(c *gin.Context) {
 
 	// 最后才返回模拟数据
 	wordInfo := mockDictionary(word)
-	saveDictionaryCache(word, "mock", dictionaryResultFromMap(wordInfo))
+	saveDictionaryCache(word, "mock", dictMode, dictionaryResultFromMap(wordInfo))
 	recordArticleStudyEvent(c, services.StudyEventDictionary, articleID, word, fmt.Sprint(wordInfo["translation"]), contextText, map[string]any{
 		"provider": "mock",
 		"cached":   false,
@@ -870,7 +885,12 @@ func SubmitVocabularyReviewAnswer(c *gin.Context) {
 	})
 }
 
-func getDictionaryCache(word string) (*services.DictionaryResult, bool) {
+func getDictionaryCache(word string, dictMode string) (*services.DictionaryResult, bool) {
+	// 仅缓存默认英中模式，英英模式每次都直查
+	if dictMode != "en-cn" {
+		return nil, false
+	}
+
 	var cache models.DictionaryCache
 	if err := database.DB.Where("word = ?", word).First(&cache).Error; err != nil {
 		return nil, false
@@ -898,8 +918,12 @@ func getDictionaryCache(word string) (*services.DictionaryResult, bool) {
 	return result, true
 }
 
-func saveDictionaryCache(word, provider string, result *services.DictionaryResult) {
+func saveDictionaryCache(word, provider, dictMode string, result *services.DictionaryResult) {
 	if result == nil || word == "" {
+		return
+	}
+	// 仅缓存默认英中模式
+	if dictMode != "en-cn" {
 		return
 	}
 	// 不缓存包含错误的结果

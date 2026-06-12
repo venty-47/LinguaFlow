@@ -43,6 +43,8 @@ func main() {
 		cfg.Translation.BaiduDictSecretKey,
 		cfg.Translation.YoudaoAppKey,
 		cfg.Translation.YoudaoAppSecret,
+		cfg.Translation.EliaschenDictURL,
+		cfg.Translation.EliaschenDictProxy,
 	)
 	handlers.InitAIAnalysisService(
 		cfg.AI.Enabled,

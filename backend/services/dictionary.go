@@ -71,7 +71,7 @@ func NewYoudaoDictionaryService(appKey, appSecret string) *YoudaoDictionaryServi
 }
 
 // LookupWord 查询单词
-func (s *YoudaoDictionaryService) LookupWord(word string) (*DictionaryResult, error) {
+func (s *YoudaoDictionaryService) LookupWord(word string, _ string) (*DictionaryResult, error) {
 	result, err := s.lookupOfficialDictionary(word)
 	if err == nil {
 		return result, nil

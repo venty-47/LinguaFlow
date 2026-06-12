@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Volume2 } from 'lucide-react';
-import { playWordAudio, preloadUpcoming } from '@/lib/wordAudio';
+import { Volume2, Volume1 } from 'lucide-react';
+import { playWordAudio, preloadUpcoming, playSentenceAudio } from '@/lib/wordAudio';
 
 interface LearnCardDefinition {
   pos: string;
@@ -212,7 +212,17 @@ export default function LearnCard({
                 </h4>
                 {exs.map((ex, i) => (
                   <div key={i} className="text-sm">
-                    <p className="text-gray-800 dark:text-gray-200">{ex.en}</p>
+                    <div className="flex items-start gap-1.5">
+                      <p className="flex-1 text-gray-800 dark:text-gray-200">{ex.en}</p>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); playSentenceAudio(ex.en); }}
+                        className="mt-0.5 shrink-0 rounded p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-blue-500 dark:hover:bg-gray-800 dark:hover:text-blue-400"
+                        title="朗读例句"
+                      >
+                        <Volume1 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
                     {ex.zh && (
                       <p className="mt-0.5 text-gray-500 dark:text-gray-400">{ex.zh}</p>
                     )}

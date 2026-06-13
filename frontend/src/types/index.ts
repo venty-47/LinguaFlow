@@ -50,6 +50,8 @@ export interface Vocabulary {
   article_id?: number;
   context?: string;
   notes?: string;
+  mnemonic?: string;
+  ai_examples?: string;
   is_learned: boolean;
   review_count: number;
   forgotten_count: number;

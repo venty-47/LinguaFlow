@@ -7,6 +7,7 @@ import { format } from 'date-fns';
 import {
   AlertTriangle,
   BookOpen,
+  Bot,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -16,16 +17,18 @@ import {
   Headphones,
   Keyboard,
   Layers,
+  Lightbulb,
   ListChecks,
   Loader2,
   Network,
   RotateCcw,
   Search,
+  Send,
   Trash2,
   Volume2,
   XCircle,
 } from 'lucide-react';
-import { translationAPI, vocabularyAPI } from '@/lib/api';
+import { translationAPI, vocabularyAPI, API_URL } from '@/lib/api';
 import {
   Vocabulary,
   VocabularyAnswerResult,
@@ -130,6 +133,16 @@ function VocabularyContent() {
   const [notesSaved, setNotesSaved] = useState(false);
   const notesWordIdRef = useRef<number | null>(null);
   const graphRequestRef = useRef(0);
+
+  // AI features state
+  const [mnemonic, setMnemonic] = useState('');
+  const [mnemonicLoading, setMnemonicLoading] = useState(false);
+  const [aiExamples, setAiExamples] = useState<{ sentence: string; translation: string; difficulty: string }[]>([]);
+  const [aiExamplesLoading, setAiExamplesLoading] = useState(false);
+  const [aiChatMessages, setAiChatMessages] = useState<{ role: string; content: string }[]>([]);
+  const [aiChatInput, setAiChatInput] = useState('');
+  const [aiChatSending, setAiChatSending] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState<'info' | 'mnemonic' | 'examples' | 'chat'>('info');
 
   const fetchVocabulary = useCallback(async () => {
     try {
@@ -352,6 +365,111 @@ function VocabularyContent() {
       }
     }
   };
+
+  // AI: Load mnemonic
+  const loadMnemonic = useCallback(async () => {
+    if (!selectedWord) return;
+    if (selectedWord.mnemonic) {
+      setMnemonic(selectedWord.mnemonic);
+      return;
+    }
+    try {
+      setMnemonicLoading(true);
+      const res = await vocabularyAPI.getMnemonic(selectedWord.id);
+      setMnemonic(res.data.mnemonic);
+    } catch {
+      setMnemonic('生成失败，请稍后重试');
+    } finally {
+      setMnemonicLoading(false);
+    }
+  }, [selectedWord]);
+
+  // AI: Load examples
+  const loadAIExamples = useCallback(async () => {
+    if (!selectedWord) return;
+    if (selectedWord.ai_examples) {
+      try {
+        setAiExamples(JSON.parse(selectedWord.ai_examples));
+      } catch { /* ignore */ }
+      return;
+    }
+    try {
+      setAiExamplesLoading(true);
+      const res = await vocabularyAPI.getAIExamples(selectedWord.id);
+      setAiExamples(res.data.examples);
+    } catch {
+      setAiExamples([]);
+    } finally {
+      setAiExamplesLoading(false);
+    }
+  }, [selectedWord]);
+
+  // AI: Send chat message
+  const sendAiChat = useCallback(async () => {
+    if (!selectedWord || !aiChatInput.trim() || aiChatSending) return;
+    const userMsg = { role: 'user', content: aiChatInput.trim() };
+    setAiChatInput('');
+    setAiChatMessages((prev) => [...prev, userMsg, { role: 'assistant', content: '' }]);
+    setAiChatSending(true);
+    try {
+      const messages = [...aiChatMessages, userMsg];
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/vocabulary/${selectedWord.id}/chat`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ messages, stream: true }),
+      });
+      const reader = res.body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n');
+        buffer = parts.pop() || '';
+        for (const part of parts) {
+          if (part.startsWith('data: ')) {
+            const raw = part.slice(6);
+            try {
+              const parsed = JSON.parse(raw);
+              const text = typeof parsed === 'string' ? parsed : parsed.data || '';
+              if (text) {
+                setAiChatMessages((prev) => {
+                  const updated = [...prev];
+                  updated[updated.length - 1] = {
+                    ...updated[updated.length - 1],
+                    content: updated[updated.length - 1].content + text,
+                  };
+                  return updated;
+                });
+              }
+            } catch { /* skip non-JSON */ }
+          }
+        }
+      }
+    } catch {
+      setAiChatMessages((prev) => {
+        const updated = [...prev];
+        updated[updated.length - 1] = { role: 'assistant', content: '回复失败，请重试' };
+        return updated;
+      });
+    } finally {
+      setAiChatSending(false);
+    }
+  }, [selectedWord, aiChatInput, aiChatMessages, aiChatSending]);
+
+  // Reset AI state when word changes
+  useEffect(() => {
+    setMnemonic('');
+    setAiExamples([]);
+    setAiChatMessages([]);
+    setActiveDetailTab('info');
+  }, [selectedWordId]);
 
   // Auto-load knowledge graph when a word is first selected
   useEffect(() => {
@@ -813,13 +931,10 @@ function VocabularyContent() {
 
         <aside className="space-y-5 xl:sticky xl:top-20 xl:self-start">
           <section className="rounded-md border border-gray-800 bg-gray-900/60 p-4">
-            <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex items-center gap-2 text-sm font-semibold text-gray-300">
-                  <Network className="h-4 w-4 text-violet-300" />
-                  单词详情
-                </div>
-                {selectedWord && <h2 className="mt-1 truncate text-2xl font-black text-gray-100">{selectedWord.word}</h2>}
+                {selectedWord && <h2 className="truncate text-2xl font-black text-gray-100">{selectedWord.word}</h2>}
+                {selectedWord?.phonetic && <p className="mt-0.5 text-xs font-semibold text-gray-500">{selectedWord.phonetic}</p>}
               </div>
               {selectedWord && (
                 <button
@@ -834,15 +949,38 @@ function VocabularyContent() {
               )}
             </div>
 
+            {/* Detail tabs */}
+            {selectedWord && (
+              <div className="mb-3 flex gap-1 border-b border-gray-800 pb-2">
+                {(['info', 'mnemonic', 'examples', 'chat'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => {
+                      setActiveDetailTab(tab);
+                      if (tab === 'mnemonic') loadMnemonic();
+                      if (tab === 'examples') loadAIExamples();
+                    }}
+                    className={`rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
+                      activeDetailTab === tab
+                        ? 'bg-blue-600 text-white'
+                        : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
+                    }`}
+                  >
+                    {{ info: '详情', mnemonic: '助记', examples: '例句', chat: 'AI对话' }[tab]}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {!selectedWord ? (
               <p className="rounded-md border border-gray-800 bg-gray-950/40 p-4 text-sm text-gray-500">
                 选择一个单词查看详情
               </p>
-            ) : (
+            ) : activeDetailTab === 'info' ? (
               <div className="space-y-4">
                 <div className="rounded-md border border-gray-800 bg-gray-950/40 p-4">
-                  {selectedWord.phonetic && <p className="text-sm font-semibold text-gray-500">{selectedWord.phonetic}</p>}
-                  <p className="mt-2 text-sm leading-6 text-gray-300">
+                  <p className="text-sm leading-6 text-gray-300">
                     {selectedWord.translation || selectedWord.definition || '暂无释义'}
                   </p>
                   {selectedWord.context && (
@@ -944,85 +1082,36 @@ function VocabularyContent() {
                 )}
                 {knowledgeGraph?.focus?.metadata?.vocabulary_id === selectedWord.id && (
                   <div className="space-y-3">
-                    {/* Graph overview header */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 text-xs font-semibold text-violet-300">
                         <Network className="h-3.5 w-3.5" />
                         知识网络
                       </div>
-                      <Link
-                        href="/knowledge-graph"
-                        className="text-[11px] font-semibold text-gray-500 hover:text-sky-400"
-                      >
+                      <Link href="/knowledge-graph" className="text-[11px] font-semibold text-gray-500 hover:text-sky-400">
                         完整图谱 →
                       </Link>
                     </div>
                     <div className="flex gap-2 text-[11px] text-gray-500">
-                      <span className="rounded bg-gray-800/70 px-1.5 py-0.5">
-                        {knowledgeGraph.stats.total_nodes} 节点
-                      </span>
-                      <span className="rounded bg-gray-800/70 px-1.5 py-0.5">
-                        {knowledgeGraph.stats.total_edges} 关系
-                      </span>
-                      <span className="rounded bg-gray-800/70 px-1.5 py-0.5">
-                        {knowledgeGraph.stats.related_words || 0} 词
-                      </span>
+                      <span className="rounded bg-gray-800/70 px-1.5 py-0.5">{knowledgeGraph.stats.total_nodes} 节点</span>
+                      <span className="rounded bg-gray-800/70 px-1.5 py-0.5">{knowledgeGraph.stats.total_edges} 关系</span>
                     </div>
-
-                    {/* Nodes grouped by type */}
                     {(() => {
                       const groups: Record<string, typeof knowledgeGraph.nodes> = {};
-                      const typeLabels: Record<string, string> = {
-                        word: '相关词',
-                        meaning: '释义',
-                        definition: '定义',
-                        context: '语境',
-                        example: '例句',
-                        article: '文章',
-                        topic: '主题',
-                        grammar: '语法',
-                        weakness: '薄弱点',
-                        review: '复习',
-                      };
-                      knowledgeGraph.nodes
-                        .filter((n) => n.type !== 'word' || n.id !== knowledgeGraph.focus?.id)
-                        .forEach((node) => {
-                          if (!groups[node.type]) groups[node.type] = [];
-                          if (groups[node.type].length < 5) groups[node.type].push(node);
-                        });
-
+                      const typeLabels: Record<string, string> = { word: '相关词', meaning: '释义', definition: '定义', context: '语境', example: '例句', article: '文章', topic: '主题', grammar: '语法', weakness: '薄弱点', review: '复习' };
+                      knowledgeGraph.nodes.filter((n) => n.type !== 'word' || n.id !== knowledgeGraph.focus?.id).forEach((node) => {
+                        if (!groups[node.type]) groups[node.type] = [];
+                        if (groups[node.type].length < 5) groups[node.type].push(node);
+                      });
                       return Object.entries(groups).map(([type, nodes]) => (
                         <div key={type}>
-                          <div className="mb-1.5 flex items-center justify-between">
-                            <span className="text-[11px] font-semibold text-gray-500">
-                              {typeLabels[type] || type}
-                            </span>
-                            <span className="text-[10px] text-gray-600">{nodes.length}</span>
+                          <div className="mb-1 flex items-center justify-between">
+                            <span className="text-[11px] font-semibold text-gray-500">{typeLabels[type] || type}</span>
                           </div>
                           <div className="space-y-1">
                             {nodes.map((node) => (
-                              <div
-                                key={node.id}
-                                className="rounded-md border border-gray-800 bg-gray-950/50 p-2"
-                              >
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className="min-w-0 truncate text-sm font-bold text-gray-200">
-                                    {node.label}
-                                  </p>
-                                  {node.metadata?.slug && (
-                                    <Link
-                                      href={`/articles/${node.metadata.slug}`}
-                                      className="shrink-0 text-[10px] text-sky-400 hover:text-sky-300"
-                                    >
-                                      查看 →
-                                    </Link>
-                                  )}
-                                </div>
-                                {node.description && (
-                                  <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-gray-500">
-                                    {node.description}
-                                  </p>
-                                )}
+                              <div key={node.id} className="rounded-md border border-gray-800 bg-gray-950/50 p-2">
+                                <p className="min-w-0 truncate text-sm font-bold text-gray-200">{node.label}</p>
+                                {node.description && <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-gray-500">{node.description}</p>}
                               </div>
                             ))}
                           </div>
@@ -1031,6 +1120,107 @@ function VocabularyContent() {
                     })()}
                   </div>
                 )}
+              </div>
+            ) : activeDetailTab === 'mnemonic' ? (
+              <div className="space-y-3">
+                {mnemonicLoading ? (
+                  <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    AI 正在生成助记...
+                  </div>
+                ) : mnemonic ? (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-4">
+                    <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                      <Lightbulb className="h-3.5 w-3.5" />
+                      AI 助记
+                    </p>
+                    <p className="text-sm leading-7 text-gray-200">{mnemonic}</p>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={loadMnemonic}
+                    className="w-full rounded-md border border-dashed border-gray-700 py-6 text-sm text-gray-400 hover:border-amber-500/50 hover:text-amber-300"
+                  >
+                    点击生成 AI 助记
+                  </button>
+                )}
+              </div>
+            ) : activeDetailTab === 'examples' ? (
+              <div className="space-y-3">
+                {aiExamplesLoading ? (
+                  <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    AI 正在生成例句...
+                  </div>
+                ) : aiExamples.length > 0 ? (
+                  aiExamples.map((ex, i) => (
+                    <div key={i} className="rounded-md border border-gray-800 bg-gray-950/40 p-3">
+                      <div className="mb-1 flex items-center gap-2">
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${
+                          ex.difficulty === 'easy' ? 'bg-emerald-500/20 text-emerald-300' :
+                          ex.difficulty === 'medium' ? 'bg-yellow-500/20 text-yellow-300' :
+                          'bg-red-500/20 text-red-300'
+                        }`}>
+                          {{ easy: '简单', medium: '中等', hard: '较难' }[ex.difficulty] || ex.difficulty}
+                        </span>
+                      </div>
+                      <p className="text-sm leading-6 text-gray-200">{ex.sentence}</p>
+                      <p className="mt-1 text-xs leading-5 text-gray-500">{ex.translation}</p>
+                    </div>
+                  ))
+                ) : (
+                  <button
+                    type="button"
+                    onClick={loadAIExamples}
+                    className="w-full rounded-md border border-dashed border-gray-700 py-6 text-sm text-gray-400 hover:border-blue-500/50 hover:text-blue-300"
+                  >
+                    点击生成 AI 例句
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* AI Chat tab */
+              <div className="flex flex-col" style={{ height: '400px' }}>
+                <div className="flex-1 space-y-3 overflow-y-auto rounded-md border border-gray-800 bg-gray-950/40 p-3">
+                  {aiChatMessages.length === 0 ? (
+                    <div className="flex h-full items-center justify-center text-center text-sm text-gray-500">
+                      <div>
+                        <Bot className="mx-auto mb-2 h-8 w-8 text-gray-600" />
+                        问我关于这个词的任何问题
+                      </div>
+                    </div>
+                  ) : (
+                    aiChatMessages.map((msg, i) => (
+                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6 ${
+                          msg.role === 'user'
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-800 text-gray-200'
+                        }`}>
+                          {msg.content || (aiChatSending && i === aiChatMessages.length - 1 ? '思考中...' : '')}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <input
+                    value={aiChatInput}
+                    onChange={(e) => setAiChatInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAiChat(); } }}
+                    placeholder="问我关于这个词的问题..."
+                    disabled={aiChatSending}
+                    className="flex-1 rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-100 outline-none placeholder:text-gray-600 focus:border-blue-500 disabled:opacity-50"
+                  />
+                  <button
+                    onClick={sendAiChat}
+                    disabled={aiChatSending || !aiChatInput.trim()}
+                    className="rounded-md bg-blue-600 px-3 py-2 text-white hover:bg-blue-500 disabled:opacity-50"
+                  >
+                    <Send className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
             )}
           </section>

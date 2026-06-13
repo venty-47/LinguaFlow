@@ -295,6 +295,12 @@ export const vocabularyAPI = {
     api.delete(`/vocabulary/${id}`),
   submitAnswer: (id: number, data: { type: string; answer: string }) =>
     api.post(`/vocabulary/${id}/review-answer`, data),
+  getMnemonic: (id: number) =>
+    api.get(`/vocabulary/${id}/mnemonic`),
+  getAIExamples: (id: number) =>
+    api.get(`/vocabulary/${id}/ai-examples`),
+  chatWithWord: (id: number, data: { messages: { role: string; content: string }[]; stream?: boolean }) =>
+    api.post(`/vocabulary/${id}/chat`, data),
 };
 
 export const knowledgeGraphAPI = {

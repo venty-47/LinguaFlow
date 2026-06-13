@@ -1,8 +1,12 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"gugudu-backend/database"
 	"gugudu-backend/models"
+	"gugudu-backend/services"
 	"math"
 	"net/http"
 	"regexp"
@@ -712,4 +716,352 @@ func todayString() string {
 
 func isRecordNotFound(err error) bool {
 	return err != nil && err == gorm.ErrRecordNotFound
+}
+
+type UserProfileResponse struct {
+	TargetExam   string `json:"target_exam"`
+	TargetLevel  string `json:"target_level"`
+	CurrentLevel string `json:"current_level"`
+}
+
+func GetUserProfile(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var profile models.UserProfile
+	err := database.DB.Where("user_id = ?", userID.(uint)).First(&profile).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load user profile"})
+		return
+	}
+
+	if err == gorm.ErrRecordNotFound {
+		c.JSON(http.StatusOK, UserProfileResponse{
+			TargetExam:   "",
+			TargetLevel:  "",
+			CurrentLevel: "",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, UserProfileResponse{
+		TargetExam:   profile.TargetExam,
+		TargetLevel:  profile.TargetLevel,
+		CurrentLevel: profile.CurrentLevel,
+	})
+}
+
+type UpdateUserProfileRequest struct {
+	TargetExam   string `json:"target_exam"`
+	TargetLevel  string `json:"target_level"`
+	CurrentLevel string `json:"current_level"`
+}
+
+func UpdateUserProfile(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+
+	var req UpdateUserProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var profile models.UserProfile
+	err := database.DB.Where("user_id = ?", userID.(uint)).First(&profile).Error
+	if err != nil && err != gorm.ErrRecordNotFound {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load user profile"})
+		return
+	}
+
+	if err == gorm.ErrRecordNotFound {
+		profile = models.UserProfile{
+			UserID:       userID.(uint),
+			TargetExam:   req.TargetExam,
+			TargetLevel:  req.TargetLevel,
+			CurrentLevel: req.CurrentLevel,
+		}
+		if err := database.DB.Create(&profile).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user profile"})
+			return
+		}
+	} else {
+		profile.TargetExam = req.TargetExam
+		profile.TargetLevel = req.TargetLevel
+		profile.CurrentLevel = req.CurrentLevel
+		if err := database.DB.Save(&profile).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update user profile"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, UserProfileResponse{
+		TargetExam:   profile.TargetExam,
+		TargetLevel:  profile.TargetLevel,
+		CurrentLevel: profile.CurrentLevel,
+	})
+}
+
+type StudyDataInput struct {
+	UserID             uint   `json:"user_id"`
+	ReviewDueWords     int    `json:"review_due_words"`
+	ForgottenWords     int    `json:"forgotten_words"`
+	RecentReadingCount int    `json:"recent_reading_count"`
+	WordBookBacklog    int    `json:"wordbook_backlog"`
+	IncompleteVideos   int    `json:"incomplete_videos"`
+	TargetExam         string `json:"target_exam"`
+	CurrentLevel       string `json:"current_level"`
+	TargetLevel        string `json:"target_level"`
+	DailyReadMinutes   int    `json:"daily_read_minutes"`
+	DailyReviewWords   int    `json:"daily_review_words"`
+	DailyArticles      int    `json:"daily_articles"`
+}
+
+func CollectStudyData(userID uint) (StudyDataInput, error) {
+	input := StudyDataInput{UserID: userID}
+
+	today := time.Now().Format("2006-01-02")
+
+	var reviewDueCount int64
+	database.DB.Model(&models.Vocabulary{}).
+		Where("user_id = ? AND next_review_at <= ?", userID, today).
+		Count(&reviewDueCount)
+	input.ReviewDueWords = int(reviewDueCount)
+
+	var forgottenCount int64
+	database.DB.Model(&models.Vocabulary{}).
+		Where("user_id = ? AND forgotten_count >= 3", userID).
+		Count(&forgottenCount)
+	input.ForgottenWords = int(forgottenCount)
+
+	weekAgo := time.Now().AddDate(0, 0, -7)
+	var recentReadCount int64
+	database.DB.Model(&models.ReadHistory{}).
+		Where("user_id = ? AND last_read_at >= ?", userID, weekAgo).
+		Count(&recentReadCount)
+	input.RecentReadingCount = int(recentReadCount)
+
+	var backlog int64
+	database.DB.Model(&models.UserWordBook{}).
+		Joins("JOIN word_books ON word_books.id = user_word_books.word_book_id").
+		Where("user_word_books.user_id = ? AND user_word_books.is_active = ?", userID, true).
+		Where("word_books.word_count > (user_word_books.learned_count + user_word_books.mastered_count)").
+		Count(&backlog)
+	input.WordBookBacklog = int(backlog)
+
+	var incompleteVideoCount int64
+	database.DB.Model(&models.VideoLesson{}).
+		Where("user_id = ? AND status = 'processed' AND progress < 100", userID).
+		Count(&incompleteVideoCount)
+	input.IncompleteVideos = int(incompleteVideoCount)
+
+	var profile models.UserProfile
+	if err := database.DB.Where("user_id = ?", userID).First(&profile).Error; err == nil {
+		input.TargetExam = profile.TargetExam
+		input.TargetLevel = profile.TargetLevel
+		input.CurrentLevel = profile.CurrentLevel
+	}
+
+	var goal models.StudyGoal
+	if err := database.DB.Where("user_id = ?", userID).First(&goal).Error; err == nil {
+		input.DailyReadMinutes = goal.DailyReadMinutes
+		input.DailyReviewWords = goal.DailyReviewWords
+		input.DailyArticles = goal.DailyArticles
+	} else {
+		input.DailyReadMinutes = defaultDailyReadMinutes
+		input.DailyReviewWords = defaultDailyReviewWords
+		input.DailyArticles = defaultDailyArticles
+	}
+
+	return input, nil
+}
+
+func GetStudyPlan(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	today := time.Now().Format("2006-01-02")
+	cacheKey := fmt.Sprintf("study_plan:%d:%s", userID.(uint), today)
+
+	ctx := context.Background()
+
+	cachedContent, err := database.RDB.Get(ctx, cacheKey).Result()
+	if err == nil && cachedContent != "" {
+		c.JSON(http.StatusOK, gin.H{
+			"content": cachedContent,
+			"cached":  true,
+		})
+		return
+	}
+
+	var studyPlan models.StudyPlan
+	err = database.DB.Where("user_id = ? AND plan_date = ?", userID.(uint), today).First(&studyPlan).Error
+	if err == nil && studyPlan.Content != "" {
+		redisTTL := getTTLToMidnight()
+		database.RDB.Set(ctx, cacheKey, studyPlan.Content, redisTTL)
+
+		c.JSON(http.StatusOK, gin.H{
+			"content": studyPlan.Content,
+			"cached":  false,
+		})
+		return
+	}
+
+	content, err := generateStudyPlanSync(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("生成学习计划失败: %v", err)})
+		return
+	}
+
+	redisTTL := getTTLToMidnight()
+	database.RDB.Set(ctx, cacheKey, content, redisTTL)
+
+	var plan models.StudyPlan
+	err = database.DB.Where("user_id = ? AND plan_date = ?", userID.(uint), today).First(&plan).Error
+	if err == gorm.ErrRecordNotFound {
+		plan = models.StudyPlan{
+			UserID:   userID.(uint),
+			PlanDate: today,
+			Content:  content,
+		}
+		database.DB.Create(&plan)
+	} else if err == nil {
+		plan.Content = content
+		database.DB.Save(&plan)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"content": content,
+		"cached":  false,
+	})
+}
+
+func generateStudyPlanSync(userID uint) (string, error) {
+	studyData, err := CollectStudyData(userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to collect study data: %w", err)
+	}
+
+	if aiAnalysisService == nil || !aiAnalysisService.IsConfigured() {
+		return "", fmt.Errorf("AI 服务未配置")
+	}
+
+	aiInput := services.StudyPlanDataInput{
+		UserID:             studyData.UserID,
+		ReviewDueWords:     studyData.ReviewDueWords,
+		ForgottenWords:     studyData.ForgottenWords,
+		RecentReadingCount: studyData.RecentReadingCount,
+		WordBookBacklog:    studyData.WordBookBacklog,
+		IncompleteVideos:   studyData.IncompleteVideos,
+		TargetExam:         studyData.TargetExam,
+		CurrentLevel:       studyData.CurrentLevel,
+		TargetLevel:        studyData.TargetLevel,
+		DailyReadMinutes:   studyData.DailyReadMinutes,
+		DailyReviewWords:   studyData.DailyReviewWords,
+		DailyArticles:      studyData.DailyArticles,
+	}
+
+	var content strings.Builder
+	err = aiAnalysisService.GenerateStudyPlanStream(aiInput, func(delta string) error {
+		content.WriteString(delta)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return content.String(), nil
+}
+
+func RegenerateStudyPlan(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	today := time.Now().Format("2006-01-02")
+	cacheKey := fmt.Sprintf("study_plan:%d:%s", userID.(uint), today)
+
+	ctx := context.Background()
+
+	studyData, err := CollectStudyData(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to collect study data"})
+		return
+	}
+
+	if aiAnalysisService == nil || !aiAnalysisService.IsConfigured() {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "AI 服务未配置"})
+		return
+	}
+
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "当前服务器不支持流式输出"})
+		return
+	}
+
+	var fullContent strings.Builder
+
+	aiInput := services.StudyPlanDataInput{
+		UserID:             studyData.UserID,
+		ReviewDueWords:     studyData.ReviewDueWords,
+		ForgottenWords:     studyData.ForgottenWords,
+		RecentReadingCount: studyData.RecentReadingCount,
+		WordBookBacklog:    studyData.WordBookBacklog,
+		IncompleteVideos:   studyData.IncompleteVideos,
+		TargetExam:         studyData.TargetExam,
+		CurrentLevel:       studyData.CurrentLevel,
+		TargetLevel:        studyData.TargetLevel,
+		DailyReadMinutes:   studyData.DailyReadMinutes,
+		DailyReviewWords:   studyData.DailyReviewWords,
+		DailyArticles:      studyData.DailyArticles,
+	}
+
+	err = aiAnalysisService.GenerateStudyPlanStream(aiInput, func(delta string) error {
+		fullContent.WriteString(delta)
+		payload, jsonErr := json.Marshal(gin.H{"delta": delta})
+		if jsonErr != nil {
+			return jsonErr
+		}
+		if _, jsonErr := fmt.Fprintf(c.Writer, "data: %s\n\n", payload); jsonErr != nil {
+			return jsonErr
+		}
+		flusher.Flush()
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("AI 学习计划生成失败: %v\n", err)
+		payload, _ := json.Marshal(gin.H{"error": "AI 学习计划暂时不可用"})
+		fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
+		flusher.Flush()
+		return
+	}
+
+	content := fullContent.String()
+
+	redisTTL := getTTLToMidnight()
+	database.RDB.Set(ctx, cacheKey, content, redisTTL)
+
+	var studyPlan models.StudyPlan
+	err = database.DB.Where("user_id = ? AND plan_date = ?", userID.(uint), today).First(&studyPlan).Error
+	if err == gorm.ErrRecordNotFound {
+		studyPlan = models.StudyPlan{
+			UserID:   userID.(uint),
+			PlanDate: today,
+			Content:  content,
+		}
+		database.DB.Create(&studyPlan)
+	} else if err == nil {
+		studyPlan.Content = content
+		database.DB.Save(&studyPlan)
+	}
+
+	fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+	flusher.Flush()
+}
+
+func getTTLToMidnight() time.Duration {
+	now := time.Now()
+	midnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	return time.Until(midnight)
 }

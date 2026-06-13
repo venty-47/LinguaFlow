@@ -528,3 +528,32 @@ type MembershipBenefit struct {
 	ForPremium  bool   `gorm:"default:true" json:"for_premium"` // 会员用户是否可用
 	SortOrder   int    `gorm:"default:0" json:"sort_order"`
 }
+
+// UserProfile 用户学习档案（考试目标等）
+type UserProfile struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID       uint   `gorm:"not null;uniqueIndex" json:"user_id"`
+	TargetExam   string `gorm:"size:50" json:"target_exam"`   // 四级/考研/雅思/托福/自定义
+	TargetLevel  string `gorm:"size:10" json:"target_level"`  // A1-C2
+	CurrentLevel string `gorm:"size:10" json:"current_level"` // A1-C2
+
+	User *User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}
+
+// StudyPlan AI 学习计划缓存
+type StudyPlan struct {
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+
+	UserID    uint   `gorm:"not null;uniqueIndex:idx_user_plan_date" json:"user_id"`
+	PlanDate  string `gorm:"size:10;not null;uniqueIndex:idx_user_plan_date" json:"plan_date"`
+	Content   string `gorm:"type:text" json:"content"`
+
+	User *User `gorm:"foreignKey:UserID" json:"user,omitempty"`
+}

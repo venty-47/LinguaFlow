@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { articleAPI, historyAPI, studyAPI, vocabularyAPI } from '@/lib/api';
 import { useAuthStore } from '@/store/authStore';
-import { Article, ReadHistory, StudyDiagnostics, StudyToday, Vocabulary } from '@/types';
+import { Article, ReadHistory, StudyDiagnostics, StudyPlanData, StudyToday, Vocabulary } from '@/types';
 
 const difficultyLabels = {
   easy: '简单',
@@ -66,6 +66,9 @@ export default function StudyPage() {
   const [editingGoal, setEditingGoal] = useState(false);
   const [error, setError] = useState('');
   const [mounted, setMounted] = useState(false);
+  const [aiPlan, setAiPlan] = useState<StudyPlanData | null>(null);
+  const [loadingPlan, setLoadingPlan] = useState(true);
+  const [planError, setPlanError] = useState('');
   const [goalForm, setGoalForm] = useState({
     daily_read_minutes: 20,
     daily_review_words: 10,
@@ -75,6 +78,25 @@ export default function StudyPage() {
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+
+    const fetchPlan = async () => {
+      try {
+        setLoadingPlan(true);
+        const response = await studyAPI.getPlan();
+        const data = response.data.data as StudyPlanData;
+        setAiPlan(data);
+      } catch (err) {
+        setPlanError('加载学习计划失败');
+      } finally {
+        setLoadingPlan(false);
+      }
+    };
+
+    fetchPlan();
+  }, [mounted]);
 
   useEffect(() => {
     if (!mounted) return;
@@ -145,6 +167,24 @@ export default function StudyPage() {
       setError(err.response?.data?.error || '目标保存失败');
     } finally {
       setSavingGoal(false);
+    }
+  };
+
+  const handleRegeneratePlan = async () => {
+    try {
+      setLoadingPlan(true);
+      setPlanError('');
+
+      for await (const chunk of studyAPI.regeneratePlan()) {
+        setAiPlan((prev) => ({
+          content: (prev?.content || '') + chunk,
+          cached: false,
+        }));
+      }
+    } catch (err: any) {
+      setPlanError(err.message || '重新生成学习计划失败');
+    } finally {
+      setLoadingPlan(false);
     }
   };
 
@@ -276,6 +316,48 @@ export default function StudyPage() {
           {error}
         </div>
       )}
+
+      <div className="bg-gradient-to-r from-violet-500 to-purple-600 rounded-xl p-6 text-white mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-5 h-5" />
+            <h2 className="text-lg font-semibold">今日学习规划</h2>
+            {aiPlan?.cached && (
+              <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">已缓存</span>
+            )}
+          </div>
+          <button
+            onClick={handleRegeneratePlan}
+            disabled={loadingPlan}
+            className="flex items-center gap-1 text-sm bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+          >
+            <RotateCcw className={`w-4 h-4 ${loadingPlan ? 'animate-spin' : ''}`} />
+            重新规划
+          </button>
+        </div>
+
+        {loadingPlan && !aiPlan ? (
+          <div className="space-y-2">
+            <div className="h-4 bg-white/20 rounded animate-pulse w-3/4"></div>
+            <div className="h-4 bg-white/20 rounded animate-pulse w-1/2"></div>
+          </div>
+        ) : planError ? (
+          <p className="text-red-200 text-sm">{planError}</p>
+        ) : aiPlan ? (
+          <p className="text-lg leading-relaxed">{aiPlan.content}</p>
+        ) : (
+          <div>
+            <p className="text-white/70">设置学习目标后，AI 将为你规划今日学习内容</p>
+            <Link
+              href="/profile"
+              className="mt-3 inline-flex items-center gap-1 text-sm bg-white/30 hover:bg-white/40 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <Target className="w-4 h-4" />
+              设置你的考试目标
+            </Link>
+          </div>
+        )}
+      </div>
 
       <section className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((item) => {

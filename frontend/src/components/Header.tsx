@@ -51,6 +51,7 @@ export default function Header() {
         { name: '最近更新', path: '/latest' },
         { name: '全部外刊', path: '/journals' },
         { name: '我的收藏', path: '/subscriptions' },
+        { name: '收藏句子', path: '/sentences' },
       ],
     },
   ];

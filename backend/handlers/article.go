@@ -416,6 +416,11 @@ func buildAIStudyNoteDraft(userID, articleID uint) (*services.ArticleStudyNoteRe
 	})
 }
 
+type articleQuizRequest struct {
+	QuestionTypes []string `json:"question_types"` // 默认 ["single_choice"]
+	Count         int       `json:"count"`          // 每种题型数量，默认 2
+}
+
 type articleQuizQuestionResponse struct {
 	ID           uint     `json:"id"`
 	QuestionType string   `json:"question_type"`
@@ -1066,7 +1071,7 @@ func ensureArticleQuiz(articleID uint) (models.ArticleQuiz, error) {
 		return quiz, err
 	}
 	if count == 0 {
-		questions := buildRuleArticleQuizQuestions(article, quiz.ID)
+		questions := buildMultiTypeQuizQuestions(article, quiz.ID, []string{"single_choice"}, 2)
 		if len(questions) > 0 {
 			if err := database.DB.Create(&questions).Error; err != nil {
 				return quiz, err
@@ -1131,40 +1136,168 @@ func buildArticleQuizResponse(quiz models.ArticleQuiz, attempt *models.ArticleQu
 	}
 }
 
-func buildRuleArticleQuizQuestions(article models.Article, quizID uint) []models.ArticleQuizQuestion {
+// GenerateArticleQuiz 生成指定题型的文章测验
+func GenerateArticleQuiz(c *gin.Context) {
+	userID, _ := c.Get("user_id")
+	articleID, _ := strconv.Atoi(c.Param("id"))
+
+	var req articleQuizRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		req = articleQuizRequest{
+			QuestionTypes: []string{"single_choice"},
+			Count:         2,
+		}
+	}
+
+	if len(req.QuestionTypes) == 0 {
+		req.QuestionTypes = []string{"single_choice"}
+	}
+	if req.Count <= 0 || req.Count > 10 {
+		req.Count = 2
+	}
+
+	validTypes := map[string]bool{
+		"single_choice": true,
+		"true_false":    true,
+		"main_idea":     true,
+		"word_meaning":  true,
+	}
+	questionTypes := []string{}
+	for _, qt := range req.QuestionTypes {
+		if validTypes[qt] {
+			questionTypes = append(questionTypes, qt)
+		}
+	}
+	if len(questionTypes) == 0 {
+		questionTypes = []string{"single_choice"}
+	}
+
+	quiz, err := generateQuizWithTypes(uint(articleID), questionTypes, req.Count)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Article not found"})
+		return
+	}
+
+	var latestAttempt models.ArticleQuizAttempt
+	hasAttempt := database.DB.
+		Where("user_id = ? AND quiz_id = ?", userID, quiz.ID).
+		Order("created_at DESC").
+		First(&latestAttempt).Error == nil
+
+	var attempt *models.ArticleQuizAttempt
+	if hasAttempt {
+		attempt = &latestAttempt
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": buildArticleQuizResponse(quiz, attempt, hasAttempt)})
+}
+
+func generateQuizWithTypes(articleID uint, questionTypes []string, countPerType int) (models.ArticleQuiz, error) {
+	var quiz models.ArticleQuiz
+	var article models.Article
+	if err := database.DB.Preload("Category").
+		Where("id = ? AND status = ?", articleID, "published").
+		First(&article).Error; err != nil {
+		return quiz, err
+	}
+
+	quiz = models.ArticleQuiz{
+		ArticleID: article.ID,
+		Title:     "读后理���测验",
+	}
+	if err := database.DB.Where("article_id = ?", article.ID).
+		Attrs(quiz).
+		FirstOrCreate(&quiz).Error; err != nil {
+		return quiz, err
+	}
+
+	database.DB.Where("quiz_id = ?", quiz.ID).Delete(&models.ArticleQuizQuestion{})
+
+	questions := buildMultiTypeQuizQuestions(article, quiz.ID, questionTypes, countPerType)
+	if len(questions) > 0 {
+		if err := database.DB.Create(&questions).Error; err != nil {
+			return quiz, err
+		}
+	}
+
+	if err := database.DB.
+		Preload("Questions", func(db *gorm.DB) *gorm.DB {
+			return db.Order("sort_order ASC, id ASC")
+		}).
+		First(&quiz, quiz.ID).Error; err != nil {
+		return quiz, err
+	}
+	return quiz, nil
+}
+
+func buildMultiTypeQuizQuestions(article models.Article, quizID uint, questionTypes []string, countPerType int) []models.ArticleQuizQuestion {
+	questions := []models.ArticleQuizQuestion{}
+	sortOrder := 1
+
+	for _, qt := range questionTypes {
+		switch qt {
+		case "single_choice":
+			qs := generateSingleChoiceQuestions(article, quizID, sortOrder, countPerType)
+			questions = append(questions, qs...)
+			sortOrder += len(qs)
+		case "true_false":
+			qs := generateTrueFalseQuestions(article, quizID, sortOrder, countPerType)
+			questions = append(questions, qs...)
+			sortOrder += len(qs)
+		case "main_idea":
+			qs := generateMainIdeaQuestions(article, quizID, sortOrder, countPerType)
+			questions = append(questions, qs...)
+			sortOrder += len(qs)
+		case "word_meaning":
+			qs := generateWordMeaningQuestions(article, quizID, sortOrder, countPerType)
+			questions = append(questions, qs...)
+			sortOrder += len(qs)
+		}
+	}
+
+	for i := range questions {
+		questions[i].SortOrder = i + 1
+	}
+	return questions
+}
+
+func generateSingleChoiceQuestions(article models.Article, quizID uint, startOrder int, count int) []models.ArticleQuizQuestion {
 	paragraphs := splitArticleParagraphs(article.Content)
 	if len(paragraphs) == 0 {
 		paragraphs = []string{article.Summary}
 	}
 
 	summary := firstNonEmptyString(strings.TrimSpace(article.Summary), firstSentence(paragraphs[0]))
-	categoryName := "这类话题"
-	if article.Category.Name != "" {
-		categoryName = article.Category.Name
+	categoryName := article.Category.Name
+	if categoryName == "" {
+		categoryName = "这类话题"
 	}
 
-	mainPointOptions := uniqueOptions([]string{
-		summary,
-		fmt.Sprintf("文章主要介绍 %s 领域的一项新闻或趋势。", categoryName),
-		"文章主要比较多个无关事件的时间顺序。",
-		"文章主要讲述作者的个人学习经历。",
-	})
-
 	keywords := extractQuizKeywords(article)
-	keyword := "key idea"
+	keyword := "key concept"
 	if len(keywords) > 0 {
-		keyword = keywords[0]
+		keyword = keywords[rand.Intn(len(keywords))]
 	}
 
 	detailParagraph := paragraphs[minArticleInt(1, len(paragraphs)-1)]
-	lastParagraph := paragraphs[len(paragraphs)-1]
-	questions := []models.ArticleQuizQuestion{
-		newQuizQuestion(quizID, 1,
+	_ = detailParagraph
+	questions := []models.ArticleQuizQuestion{}
+
+	if count >= 1 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder, "single_choice",
 			"Which statement best captures the main idea of the article?",
-			mainPointOptions,
+			uniqueOptions([]string{
+				summary,
+				fmt.Sprintf("文章主要介绍 %s 领域的一项新闻或趋势。", categoryName),
+				"文章主要比较多个无关事件的时间顺序。",
+				"文章主要讲述作者的个人学习经历。",
+			}),
 			0,
-			"主旨题可以先看标题、摘要和每段首句；正确选项应覆盖全文，而不是只抓一个局部细节。"),
-		newQuizQuestion(quizID, 2,
+			"���旨题可以先看标题、摘要和每段首句；正确选项应覆盖全文，而不是只抓一个局部细节。"))
+	}
+
+	if count >= 2 && len(paragraphs) > 1 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "single_choice",
 			"According to the article, which detail is explicitly mentioned?",
 			uniqueOptions([]string{
 				firstSentence(detailParagraph),
@@ -1173,9 +1306,12 @@ func buildRuleArticleQuizQuestions(article models.Article, quizID uint) []models
 				"The article focuses only on entertainment and personal stories.",
 			}),
 			0,
-			"细节题要回到原文定位。正确选项来自文章中的具体句子。"),
-		newQuizQuestion(quizID, 3,
-			fmt.Sprintf("In this article, what role does “%s” most likely play?", keyword),
+			"细节题要回到原文定位。正确选项来自文章中的具体句子。"))
+	}
+
+	if count >= 3 && len(keywords) > 0 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "single_choice",
+			fmt.Sprintf("In this article, what role does \"%s\" most likely play?", keyword),
 			[]string{
 				"It names an important concept or actor in the article.",
 				"It is used as a time marker only.",
@@ -1183,33 +1319,153 @@ func buildRuleArticleQuizQuestions(article models.Article, quizID uint) []models
 				"It is unrelated to the article's topic.",
 			},
 			0,
-			"词义语境题不只看中文意思，还要判断该词在文章论述中承担的作用。"),
-		newQuizQuestion(quizID, 4,
-			"What can a careful reader infer from the final part of the article?",
-			uniqueOptions([]string{
-				firstSentence(lastParagraph),
-				"The article claims there are no remaining challenges.",
-				"The article says the topic is already irrelevant.",
-				"The article ends by changing to a completely different subject.",
-			}),
-			0,
-			"推理题通常来自结尾段的态度、风险或未解决问题。"),
-		newQuizQuestion(quizID, 5,
-			"Which reading strategy best helps understand this article?",
-			[]string{
-				"Track the problem, the proposed response, and the remaining challenge.",
-				"Ignore repeated topic words and read only the dates.",
-				"Translate every word before identifying the article structure.",
-				"Skip the summary and focus only on the image.",
-			},
-			0,
-			"外刊阅读可以先抓问题、方案、影响和限制，再处理生词和长难句。"),
+			"词义语境题不只看中文意思，还要判断该词在文章论述中承担的作用。"))
 	}
 
-	for index := range questions {
-		questions[index].SortOrder = index + 1
-	}
 	return questions
+}
+
+func generateTrueFalseQuestions(article models.Article, quizID uint, startOrder int, count int) []models.ArticleQuizQuestion {
+	paragraphs := splitArticleParagraphs(article.Content)
+	if len(paragraphs) == 0 {
+		return []models.ArticleQuizQuestion{}
+	}
+
+	categoryName := article.Category.Name
+	if categoryName == "" {
+		categoryName = "该领域"
+	}
+
+	questions := []models.ArticleQuizQuestion{}
+
+	if count >= 1 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder, "true_false",
+			fmt.Sprintf("The article is primarily about %s.", categoryName),
+			[]string{"True", "False"},
+			0,
+			"根据文章标题和摘要，主要内容与分类相关。"))
+	}
+
+	if count >= 2 && len(paragraphs) > 1 {
+		firstPara := firstSentence(paragraphs[0])
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "true_false",
+			fmt.Sprintf("The article begins with: \"%s\" This statement is accurate based on the article.",
+				truncateRunes(firstPara, 100)),
+			[]string{"True", "False"},
+			0,
+			"文章开头通常是概括性陈述，与后文内容一致。"))
+	}
+
+	if count >= 3 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "true_false",
+			"The article presents multiple perspectives and acknowledges remaining challenges.",
+			[]string{"True", "False"},
+			1,
+			"多数新闻文章会呈现问题的复杂性，承认挑战和未解决的问题。"))
+	}
+
+	return questions
+}
+
+func generateMainIdeaQuestions(article models.Article, quizID uint, startOrder int, count int) []models.ArticleQuizQuestion {
+	paragraphs := splitArticleParagraphs(article.Content)
+	if len(paragraphs) == 0 {
+		paragraphs = []string{article.Summary}
+	}
+
+	summary := firstNonEmptyString(strings.TrimSpace(article.Summary), firstSentence(paragraphs[0]))
+	categoryName := article.Category.Name
+	if categoryName == "" {
+		categoryName = "this topic"
+	}
+
+	questions := []models.ArticleQuizQuestion{}
+
+	if count >= 1 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder, "main_idea",
+			"What is the main purpose of this article?",
+			[]string{
+				fmt.Sprintf("To inform readers about recent developments in %s.", categoryName),
+				"To persuade readers to take immediate action.",
+				"To entertain readers with a personal story.",
+				"To criticize existing policies without alternatives.",
+			},
+			0,
+			"大多数新闻和科普文章的写作目的是提供信息，让读者了解最新发展。"))
+	}
+
+	if count >= 2 {
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "main_idea",
+			"Which of the following best summarizes the article's central message?",
+			uniqueOptions([]string{
+				summary,
+				"The article argues that the topic is irrelevant to most readers.",
+				"The article claims the issue has been completely solved.",
+				"The article focuses only on historical background without current relevance.",
+			}),
+			0,
+			"文章主旨通常可以从摘要中准确提炼，要包含文章的核心里度。"))
+	}
+
+	return questions
+}
+
+func generateWordMeaningQuestions(article models.Article, quizID uint, startOrder int, count int) []models.ArticleQuizQuestion {
+	paragraphs := splitArticleParagraphs(article.Content)
+	if len(paragraphs) == 0 {
+		return []models.ArticleQuizQuestion{}
+	}
+
+	keywords := extractQuizKeywords(article)
+	if len(keywords) == 0 {
+		keywords = []string{"significant", "approach", "develop", "impact", "effect"}
+	}
+
+	questions := []models.ArticleQuizQuestion{}
+
+	if count >= 1 {
+		keyword := keywords[rand.Intn(len(keywords))]
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder, "word_meaning",
+			fmt.Sprintf("In the context of this article, what does \"%s\" most likely mean?", keyword),
+			[]string{
+				"An important concept related to the article's topic.",
+				"A time marker indicating when events occurred.",
+				"The name of the article's author.",
+				"An unrelated technical term.",
+			},
+			0,
+			"根据上下文，关键词在文章中通常承担着论述核心概念的作用。"))
+	}
+
+	if count >= 2 && len(paragraphs) > 1 {
+		keyword := keywords[rand.Intn(len(keywords))]
+		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "word_meaning",
+			fmt.Sprintf("The author uses \"%s\" primarily to:", keyword),
+			[]string{
+				"Introduce a key concept that supports the article's argument.",
+				"Fill space and make the article appear longer.",
+				"Quote another source without attribution.",
+				"Transition to a completely different topic.",
+			},
+			0,
+			"重要概念在文章中用于支撑论点，而不是为了填充篇幅。"))
+	}
+
+	return questions
+}
+
+func newQuizQuestionWithType(quizID uint, sortOrder int, questionType, prompt string, options []string, correctIndex int, explanation string) models.ArticleQuizQuestion {
+	options, correctIndex = shuffleQuizOptions(options, correctIndex, int64(quizID)*100+int64(sortOrder))
+	optionsJSON, _ := json.Marshal(options)
+	return models.ArticleQuizQuestion{
+		QuizID:       quizID,
+		SortOrder:    sortOrder,
+		QuestionType: questionType,
+		Prompt:       prompt,
+		Options:      string(optionsJSON),
+		CorrectIndex: correctIndex,
+		Explanation:  explanation,
+}
 }
 
 func newQuizQuestion(quizID uint, sortOrder int, prompt string, options []string, correctIndex int, explanation string) models.ArticleQuizQuestion {

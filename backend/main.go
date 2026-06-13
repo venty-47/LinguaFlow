@@ -183,6 +183,7 @@ func main() {
 			protected.POST("/articles/:id/progress", handlers.UpdateReadProgress)
 			protected.POST("/articles/:id/assistant", middleware.PremiumRequired(database.DB), handlers.DiscussArticleWithAssistant)
 			protected.GET("/article-quizzes/:id", handlers.GetArticleQuiz)
+			protected.POST("/article-quizzes/:id/generate", handlers.GenerateArticleQuiz)
 			protected.POST("/article-quizzes/:id/submit", handlers.SubmitArticleQuiz)
 			protected.GET("/article-completions/:id", handlers.GetArticleCompletion)
 			protected.GET("/article-knowledge-graph/:id", handlers.GetArticleKnowledgeGraph)

@@ -543,6 +543,7 @@ export default function ArticlePage() {
   const [studyNote, setStudyNote] = useState<ArticleStudyNote | null>(null);
   const [studyNoteLoading, setStudyNoteLoading] = useState(false);
   const [studyNoteError, setStudyNoteError] = useState('');
+  const [nextArticle, setNextArticle] = useState<Article | null>(null);
   const [knowledgeGraphOpen, setKnowledgeGraphOpen] = useState(false);
   const [knowledgeGraph, setKnowledgeGraph] = useState<ArticleKnowledgeGraph | null>(null);
   const [knowledgeGraphLoading, setKnowledgeGraphLoading] = useState(false);
@@ -710,6 +711,17 @@ export default function ArticlePage() {
     }
   }, []);
 
+  const fetchNextArticle = useCallback(async (articleID: number) => {
+    try {
+      const response = await articleAPI.getNextArticle(articleID);
+      if (response.data.data) {
+        setNextArticle(response.data.data as Article);
+      }
+    } catch (err) {
+      console.error('Failed to fetch next article:', err);
+    }
+  }, []);
+
   useEffect(() => {
     const fetchArticle = async () => {
       try {
@@ -770,6 +782,7 @@ export default function ArticlePage() {
           setStudyNote(completionData.study_note);
         }
         fetchQuiz(article.id);
+        fetchNextArticle(article.id);
       } catch (err) {
         console.error('Failed to fetch completion summary:', err);
       } finally {
@@ -778,7 +791,7 @@ export default function ArticlePage() {
     };
 
     fetchCompletion();
-  }, [article, completion, completionLoading, fetchQuiz, isAuthenticated, readProgress, syncProgress]);
+  }, [article, completion, completionLoading, fetchQuiz, fetchNextArticle, isAuthenticated, readProgress, syncProgress]);
 
   useEffect(() => {
     if (!article || !isAuthenticated) return;
@@ -2439,6 +2452,25 @@ export default function ArticlePage() {
                               <li key={item}>{item}</li>
                             ))}
                           </ol>
+                        </div>
+                      )}
+
+                      {nextArticle && (
+                        <div className="mt-6 rounded-md border border-sky-900/50 bg-sky-950/20 p-4">
+                          <div className="mb-2 text-sm font-semibold text-sky-100">推荐下一篇文章</div>
+                          <Link
+                            href={`/articles/${nextArticle.slug}`}
+                            className="group block rounded-md border border-sky-900/40 bg-gray-950/30 p-3 transition-colors hover:border-sky-700/50 hover:bg-sky-900/20"
+                          >
+                            <div className="font-semibold text-sky-50 group-hover:text-sky-300">
+                              {nextArticle.title}
+                            </div>
+                            {nextArticle.summary && (
+                              <div className="mt-1 text-sm text-sky-100/70 line-clamp-2">
+                                {nextArticle.summary}
+                              </div>
+                            )}
+                          </Link>
                         </div>
                       )}
                     </div>

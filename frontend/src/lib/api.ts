@@ -110,6 +110,8 @@ export const articleAPI = {
     api.get(`/article-quizzes/${id}`),
   submitQuiz: (id: number, answers: number[]) =>
     api.post(`/article-quizzes/${id}/submit`, { answers }),
+  getNextArticle: (id: number) =>
+    api.get(`/articles/${id}/next`),
 };
 
 // 分类 API

@@ -361,10 +361,10 @@ func (s *AIAnalysisService) GenerateStudyNote(input AIStudyNoteInput) (*ArticleS
 请只返回 JSON，不要使用 Markdown，不要输出额外解释。
 JSON 字段必须是：
 summary: 字符串，中文，概括文章内容和本次学习行为
-keywords: 字符串数组，6-12 个关键词或表达
-difficult_sentences: 数组，每项包含 text, translation, reason, tips。tips 是字符串数组
+keywords: 字符串数组，精确 5 个关键词
+difficult_sentences: 数组，精确 2 项，每项包含 text, translation, reason, tips。tips 是字符串数组
 grammar_points: 数组，每项包含 title, description, examples。examples 是字符串数组
-expression_replacements: 数组，每项包含 original, alternative, note
+expression_replacements: 数组，精确 3 项，每项包含 original, alternative, note
 review_plan: 字符串数组，3-5 条复习动作
 要求：
 1. 优先使用用户查过、翻译过、精读过、问过 AI 的内容。

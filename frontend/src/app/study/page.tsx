@@ -346,7 +346,16 @@ export default function StudyPage() {
         ) : aiPlan ? (
           <p className="text-lg leading-relaxed">{aiPlan.content}</p>
         ) : (
-          <p className="text-white/70">设置学习目标后，AI 将为你规划今日学习内容</p>
+          <div>
+            <p className="text-white/70">设置学习目标后，AI 将为你规划今日学习内容</p>
+            <Link
+              href="/profile"
+              className="mt-3 inline-flex items-center gap-1 text-sm bg-white/30 hover:bg-white/40 px-3 py-1.5 rounded-lg transition-colors"
+            >
+              <Target className="w-4 h-4" />
+              设置你的考试目标
+            </Link>
+          </div>
         )}
       </div>
 

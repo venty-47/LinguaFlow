@@ -370,7 +370,50 @@ export const studyAPI = {
     daily_articles: number;
   }) => api.put('/study/goal', data),
   getPlan: () => api.get('/study/plan'),
-  regeneratePlan: () => api.post('/study/plan'),
+  regeneratePlan: async function* () {
+    const response = await fetch(`${API_URL}/study/plan`, {
+      method: 'POST',
+      headers: {
+        ...authHeaders(),
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error('Failed to regenerate plan');
+    }
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+
+    while (reader) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n');
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') return;
+
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.content) {
+              yield parsed.content;
+            } else if (parsed.error) {
+              throw new Error(parsed.error.message || 'Generation failed');
+            }
+          } catch (e) {
+            if (e instanceof Error && e.message !== 'Generation failed') {
+              continue;
+            }
+            throw e;
+          }
+        }
+      }
+    }
+  },
 };
 
 // 词书背词 API

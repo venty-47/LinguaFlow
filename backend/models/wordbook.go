@@ -65,6 +65,10 @@ type WordBookEntry struct {
 	Difficulty string `gorm:"size:20;default:'medium'" json:"difficulty"`
 	Tags       string `gorm:"size:500" json:"tags"`
 
+	// AI 生成数据(缓存在词条上,所有用户共享)
+	Mnemonic    string `gorm:"type:text" json:"mnemonic"`
+	AIExamples  string `gorm:"type:text" json:"ai_examples"`
+
 	// 关联
 	WordBook WordBook `gorm:"foreignKey:WordBookID" json:"word_book,omitempty"`
 }

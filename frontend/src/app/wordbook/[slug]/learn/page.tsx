@@ -379,6 +379,8 @@ export default function WordBookLearnPage() {
             onRating={handleLearnRating}
             disabled={submitting}
             upcomingWords={upcomingNewWords}
+            entryId={currentNew.entry_id}
+            bookId={bookId}
           />
         </div>
       )}
@@ -398,6 +400,8 @@ export default function WordBookLearnPage() {
             onRating={handleReviewRating}
             disabled={submitting}
             upcomingWords={upcomingReviewWords}
+            entryId={currentReview.entry_id}
+            bookId={bookId}
           />
         </div>
       )}

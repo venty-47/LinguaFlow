@@ -397,6 +397,12 @@ export const wordBookAPI = {
     api.get(`/wordbooks/${id}/units`),
   resetProgress: (id: number) =>
     api.post(`/wordbooks/${id}/reset`, { confirm: true }),
+  getMnemonic: (bookId: number, entryId: number) =>
+    api.get(`/wordbooks/${bookId}/entries/${entryId}/mnemonic`),
+  getAIExamples: (bookId: number, entryId: number) =>
+    api.get(`/wordbooks/${bookId}/entries/${entryId}/ai-examples`),
+  chatWithEntry: (bookId: number, entryId: number, data: { messages: { role: string; content: string }[]; stream?: boolean }) =>
+    api.post(`/wordbooks/${bookId}/entries/${entryId}/chat`, data),
 };
 
 export const dailySentenceAPI = {

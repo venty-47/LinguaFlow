@@ -249,6 +249,9 @@ func main() {
 				wordbooks.GET("/:id/entries", handlers.GetWordBookEntries)
 				wordbooks.GET("/:id/units", handlers.GetWordBookUnits)
 				wordbooks.POST("/:id/reset", handlers.ResetWordBookProgress)
+				wordbooks.GET("/:id/entries/:entryId/mnemonic", handlers.GetWordBookEntryMnemonic)
+				wordbooks.GET("/:id/entries/:entryId/ai-examples", handlers.GetWordBookEntryAIExamples)
+				wordbooks.POST("/:id/entries/:entryId/chat", handlers.ChatWithWordBookEntry)
 			}
 		}
 	}

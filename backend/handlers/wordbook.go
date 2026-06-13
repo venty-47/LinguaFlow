@@ -94,6 +94,13 @@ type dailyTasksResponse struct {
 		DailyNewWords    int `json:"daily_new_words"`
 		DailyReviewWords int `json:"daily_review_words"`
 	} `json:"plan"`
+	Progress      struct {
+		NewLearned   int `json:"new_learned"`
+		NewTotal     int `json:"new_total"`
+		ReviewDone   int `json:"review_done"`
+		ReviewTotal  int `json:"review_total"`
+		IsCompleted  bool `json:"is_completed"`
+	} `json:"progress"`
 }
 
 type wordBookStatsResponse struct {
@@ -353,6 +360,20 @@ func GetTodayTasks(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate daily tasks"})
 		return
+	}
+
+	// 初始化或更新今日记录的目标值（只在首次或目标值为0时设置）
+	initializeDailyRecordTargets(ub.ID, tasks.TotalNew, tasks.TotalReview)
+
+	// 获取今日进度
+	today := time.Now().Format("2006-01-02")
+	var record models.WordBookDailyRecord
+	if err := database.DB.Where("user_word_book_id = ? AND date = ?", ub.ID, today).First(&record).Error; err == nil {
+		tasks.Progress.NewLearned = record.NewLearned
+		tasks.Progress.NewTotal = record.NewTotal
+		tasks.Progress.ReviewDone = record.ReviewDone
+		tasks.Progress.ReviewTotal = record.ReviewTotal
+		tasks.Progress.IsCompleted = record.IsCompleted
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": tasks})
@@ -861,22 +882,14 @@ func updateWordBookDailyRecord(userWordBookID uint, isNew bool) {
 
 	todayWasCompleted := record.IsCompleted
 
-	// 获取今日的任务总数,并根据昨日复习完成度动态调整 NewTotal
-	var ub models.UserWordBook
-	if err := database.DB.First(&ub, "id = ?", userWordBookID).Error; err == nil {
-		newTotal := ub.DailyNewWords
-		yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
-		var yesterdayRecord models.WordBookDailyRecord
-		if err := database.DB.Where("user_word_book_id = ? AND date = ?", userWordBookID, yesterday).First(&yesterdayRecord).Error; err == nil {
-			if yesterdayRecord.ReviewDone > 0 && yesterdayRecord.ReviewTotal > 0 {
-				completionRate := float64(yesterdayRecord.ReviewDone) / float64(yesterdayRecord.ReviewTotal)
-				if completionRate < 0.6 {
-					newTotal = maxInt(5, newTotal/2)
-				}
-			}
+	// 只在首次创建时初始化目标值，或者目标值为0时重新设置
+	// 注意：实际的目标值应该在 GetTodayTasks 时就设置好，这里只是兜底逻辑
+	if record.ID == 0 && record.NewTotal == 0 && record.ReviewTotal == 0 {
+		var ub models.UserWordBook
+		if err := database.DB.First(&ub, "id = ?", userWordBookID).Error; err == nil {
+			record.NewTotal = ub.DailyNewWords
+			record.ReviewTotal = ub.DailyReviewWords
 		}
-		record.NewTotal = newTotal
-		record.ReviewTotal = ub.DailyReviewWords
 	}
 
 	if isNew {
@@ -902,6 +915,37 @@ func updateWordBookDailyRecord(userWordBookID uint, isNew bool) {
 
 	// 更新 UserWordBook 的连续天数和学习天数
 	updateWordBookStreak(userWordBookID, todayWasCompleted)
+}
+
+// initializeDailyRecordTargets 初始化今日记录的目标值（只在首次获取任务时设置）
+func initializeDailyRecordTargets(userWordBookID uint, actualNewCount, actualReviewCount int) {
+	today := time.Now().Format("2006-01-02")
+
+	var record models.WordBookDailyRecord
+	err := database.DB.Where("user_word_book_id = ? AND date = ?", userWordBookID, today).First(&record).Error
+
+	if err != nil {
+		// 记录不存在，创建新记录
+		record = models.WordBookDailyRecord{
+			UserWordBookID: userWordBookID,
+			Date:           today,
+			NewTotal:       actualNewCount,
+			ReviewTotal:    actualReviewCount,
+			StudiedAt:      time.Now(),
+		}
+		if err := database.DB.Create(&record).Error; err != nil {
+			fmt.Printf("failed to create daily record: %v\n", err)
+		}
+	} else if record.NewLearned == 0 && record.ReviewDone == 0 {
+		// 记录存在但还没有任何学习进度，更新目标值
+		// 这处理了后端重启或目标值不正确的情况
+		record.NewTotal = actualNewCount
+		record.ReviewTotal = actualReviewCount
+		if err := database.DB.Save(&record).Error; err != nil {
+			fmt.Printf("failed to update daily record targets: %v\n", err)
+		}
+	}
+	// 如果已经有学习进度（NewLearned > 0 或 ReviewDone > 0），则不修改目标值
 }
 
 // updateWordBookStreak 更新词书学习连续天数

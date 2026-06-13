@@ -117,6 +117,52 @@ export default function VideoLessonPage() {
     };
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      const video = videoRef.current;
+      if (!video) return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          seekBy(-5);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          seekBy(5);
+          break;
+        case 'n':
+        case 'N':
+          e.preventDefault();
+          if (activeIndex >= 0 && activeIndex < subtitles.length - 1) {
+            seekToSubtitle(subtitles[activeIndex + 1]);
+          }
+          break;
+        case 'p':
+        case 'P':
+          e.preventDefault();
+          if (activeIndex > 0) {
+            seekToSubtitle(subtitles[activeIndex - 1]);
+          }
+          break;
+        case 'l':
+        case 'L':
+          e.preventDefault();
+          setLoopSubtitle((v) => !v);
+          break;
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeIndex, subtitles]);
+
   const saveProgress = (position: number, completed = false) => {
     if (!lesson) return;
     if (progressTimerRef.current) {
@@ -330,7 +376,7 @@ export default function VideoLessonPage() {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
         <section className="min-w-0">
-          <div className="video-learning-player overflow-hidden rounded-lg">
+          <div className="relative overflow-hidden rounded-lg">
             <video
               ref={videoRef}
               src={videoURL}

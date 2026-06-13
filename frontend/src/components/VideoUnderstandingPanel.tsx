@@ -103,8 +103,9 @@ export default function VideoUnderstandingPanel({ lesson, onSeek }: Props) {
     setError('');
 
     try {
+      const recentHistory = conversations.slice(-20);
       const messages = [
-        ...conversations.map(c => ({ role: c.role, content: c.content })),
+        ...recentHistory.map(c => ({ role: c.role, content: c.content })),
         { role: 'user' as const, content: userMessage },
       ];
 

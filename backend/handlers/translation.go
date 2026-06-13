@@ -344,9 +344,15 @@ func AddToVocabulary(c *gin.Context) {
 		return
 	}
 
-	// 检查是否已存在
+	req.Word = normalizeLookupWord(req.Word)
+	if req.Word == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid word"})
+		return
+	}
+
+	// 检查是否已存在(归一化查重)
 	var existing models.Vocabulary
-	if err := database.DB.Where("user_id = ? AND word = ?", userID, req.Word).
+	if err := database.DB.Where("user_id = ? AND LOWER(TRIM(word)) = ?", userID, req.Word).
 		First(&existing).Error; err == nil {
 		if err := services.NewKnowledgeGraphService(database.DB).SyncVocabulary(userID.(uint), existing); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to sync knowledge graph"})
@@ -694,7 +700,7 @@ func applyVocabularyReview(vocab *models.Vocabulary, rating string) error {
 	now := time.Now()
 	ease := vocab.ReviewEase
 	if ease <= 0 {
-		ease = 2.5
+		ease = srsDefaultEase
 	}
 	interval := vocab.ReviewInterval
 
@@ -719,13 +725,13 @@ func applyVocabularyReview(vocab *models.Vocabulary, rating string) error {
 			interval = maxInt(interval+1, int(float64(interval)*ease))
 		}
 		ease += 0.05
-		vocab.IsLearned = vocab.ReviewCount >= 2 || interval >= 7
+		vocab.IsLearned = vocab.ReviewCount >= srsMasteryReviewCount || interval >= srsMasteryInterval
 	default:
 		return fmt.Errorf("rating must be forgot, hard, or good")
 	}
 
-	if ease < 1.3 {
-		ease = 1.3
+	if ease < srsMinEase {
+		ease = srsMinEase
 	}
 	nextReview := now.AddDate(0, 0, interval)
 	vocab.ReviewCount++

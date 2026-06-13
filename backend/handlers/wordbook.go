@@ -25,6 +25,12 @@ const (
 	wbMinDailyReviewWords     = 10
 	wbMaxDailyReviewWords     = 300
 	wbMaxBacklogWords         = 200
+
+	// SRS 统一掌握阈值：生词本和词书共用
+	srsMasteryReviewCount = 2
+	srsMasteryInterval    = 7
+	srsDefaultEase        = 2.5
+	srsMinEase            = 1.3
 )
 
 // ---------- 请求 / 响应结构 ----------
@@ -258,16 +264,22 @@ func UnsubscribeWordBook(c *gin.Context) {
 	userID, _ := c.Get("user_id")
 	uid := userID.(uint)
 
-	result := database.DB.Where("user_id = ? AND word_book_id = ?", uid, bookID).Delete(&models.UserWordBook{})
-	if result.RowsAffected == 0 {
+	var ub models.UserWordBook
+	if err := database.DB.Where("user_id = ? AND word_book_id = ?", uid, bookID).First(&ub).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Subscription not found"})
 		return
 	}
 
-	// 同时清理进度数据(可选:保留)
-	database.DB.Where("user_id = ? AND user_word_book_id IN (?)",
-		uid, database.DB.Model(&models.UserWordBook{}).Select("id").Where("word_book_id = ?", bookID),
-	).Delete(&models.UserWordBookProgress{})
+	ubID := ub.ID
+
+	// 先清理进度数据
+	database.DB.Where("user_id = ? AND user_word_book_id = ?", uid, ubID).Delete(&models.UserWordBookProgress{})
+
+	// 清理每日记录
+	database.DB.Where("user_word_book_id = ?", ubID).Delete(&models.WordBookDailyRecord{})
+
+	// 再删除订阅
+	database.DB.Delete(&ub)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Unsubscribed"})
 }
@@ -358,7 +370,7 @@ func SubmitLearnResult(c *gin.Context) {
 	uid := userID.(uint)
 
 	var ub models.UserWordBook
-	if err := database.DB.Where("user_id = ? AND word_book_id = ?", uid, bookID).First(&ub).Error; err != nil {
+	if err := database.DB.Preload("WordBook").Where("user_id = ? AND word_book_id = ?", uid, bookID).First(&ub).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Subscription not found"})
 		return
 	}
@@ -418,7 +430,9 @@ func SubmitLearnResult(c *gin.Context) {
 
 	// 更新 LastStudiedAt
 	ub.LastStudiedAt = &now
-	database.DB.Save(&ub)
+	if err := database.DB.Save(&ub).Error; err != nil {
+		fmt.Printf("failed to update UserWordBook LastStudiedAt: %v\n", err)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Learned",
@@ -484,11 +498,24 @@ func SubmitReviewResult(c *gin.Context) {
 	if progress.Status == "mastered" {
 		ub.MasteredCount++
 	}
-	database.DB.Save(&ub)
+	if err := database.DB.Save(&ub).Error; err != nil {
+		fmt.Printf("failed to update UserWordBook after review: %v\n", err)
+	}
 
 	// 加载词条信息用于响应
 	var entry models.WordBookEntry
-	database.DB.First(&entry, progress.WordBookEntryID)
+	if err := database.DB.First(&entry, progress.WordBookEntryID).Error; err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Reviewed",
+			"data": gin.H{
+				"progress_id":    progress.ID,
+				"entry_id":       progress.WordBookEntryID,
+				"status":         progress.Status,
+				"next_review_at": progress.NextReviewAt,
+			},
+		})
+		return
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Reviewed",
@@ -520,15 +547,27 @@ func GetWordBookStats(c *gin.Context) {
 	}
 
 	var book models.WordBook
-	database.DB.First(&book, bookID)
+	if err := database.DB.First(&book, bookID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Wordbook not found"})
+		return
+	}
 
 	// 统计各状态数量
-	statusCounts := make(map[string]int)
+	type statusRow struct {
+		Status string `gorm:"column:status"`
+		Count  int    `gorm:"column:count"`
+	}
+	var statusRows []statusRow
 	database.DB.Model(&models.UserWordBookProgress{}).
 		Select("status, COUNT(*) as count").
 		Where("user_word_book_id = ?", ub.ID).
 		Group("status").
-		Pluck("status", &statusCounts)
+		Scan(&statusRows)
+
+	statusCounts := make(map[string]int)
+	for _, r := range statusRows {
+		statusCounts[r.Status] = r.Count
+	}
 
 	var totalProgress int64
 	database.DB.Model(&models.UserWordBookProgress{}).
@@ -633,7 +672,9 @@ func generateDailyTasks(db *gorm.DB, userID uint, ub models.UserWordBook) (*dail
 	reviewWords := make([]dailyTaskReviewWord, 0, len(dueProgresses))
 	for _, p := range dueProgresses {
 		var entry models.WordBookEntry
-		db.First(&entry, p.WordBookEntryID)
+		if err := db.First(&entry, p.WordBookEntryID).Error; err != nil {
+			continue
+		}
 		nextReview := ""
 		if p.NextReviewAt != nil {
 			nextReview = p.NextReviewAt.Format(time.RFC3339)
@@ -730,7 +771,7 @@ func applyWordBookReview(progress *models.UserWordBookProgress, rating string) e
 	now := time.Now()
 	ease := progress.ReviewEase
 	if ease <= 0 {
-		ease = 2.5
+		ease = srsDefaultEase
 	}
 	interval := progress.ReviewInterval
 
@@ -756,7 +797,7 @@ func applyWordBookReview(progress *models.UserWordBookProgress, rating string) e
 			interval = maxInt(interval+1, int(float64(interval)*ease))
 		}
 		ease += 0.05
-		if progress.ReviewCount >= 3 {
+		if progress.ReviewCount >= srsMasteryReviewCount || interval >= srsMasteryInterval {
 			progress.IsLearned = true
 			progress.Status = "mastered"
 		}
@@ -764,8 +805,8 @@ func applyWordBookReview(progress *models.UserWordBookProgress, rating string) e
 		return fmt.Errorf("rating must be forgot, hard, or good")
 	}
 
-	if ease < 1.3 {
-		ease = 1.3
+	if ease < srsMinEase {
+		ease = srsMinEase
 	}
 	nextReview := now.AddDate(0, 0, interval)
 	progress.ReviewCount++
@@ -778,17 +819,18 @@ func applyWordBookReview(progress *models.UserWordBookProgress, rating string) e
 
 // autoCreateVocabulary 自动写入 Vocabulary(查重)
 func autoCreateVocabulary(userID uint, entry models.WordBookEntry, progress *models.UserWordBookProgress, slug string) {
+	normalizedWord := normalizeLookupWord(entry.Word)
 	var existing models.Vocabulary
-	err := database.DB.Where("user_id = ? AND word = ?", userID, entry.Word).First(&existing).Error
+	err := database.DB.Where("user_id = ? AND LOWER(TRIM(word)) = ?", userID, normalizedWord).First(&existing).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		newVocab := models.Vocabulary{
 			UserID:      userID,
-			Word:        entry.Word,
+			Word:        normalizedWord,
 			Phonetic:    entry.USPhonetic,
 			Translation: entry.Translation,
 			Definition:  entry.Definitions,
 			Examples:    entry.Examples,
-			ReviewEase:  2.5,
+			ReviewEase:  srsDefaultEase,
 			Notes:       fmt.Sprintf("[wordbook:%s]", slug),
 		}
 		if err := database.DB.Create(&newVocab).Error; err == nil {
@@ -817,10 +859,23 @@ func updateWordBookDailyRecord(userWordBookID uint, isNew bool) {
 		}
 	}
 
-	// 获取今日的任务总数
+	todayWasCompleted := record.IsCompleted
+
+	// 获取今日的任务总数,并根据昨日复习完成度动态调整 NewTotal
 	var ub models.UserWordBook
 	if err := database.DB.First(&ub, "id = ?", userWordBookID).Error; err == nil {
-		record.NewTotal = ub.DailyNewWords
+		newTotal := ub.DailyNewWords
+		yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+		var yesterdayRecord models.WordBookDailyRecord
+		if err := database.DB.Where("user_word_book_id = ? AND date = ?", userWordBookID, yesterday).First(&yesterdayRecord).Error; err == nil {
+			if yesterdayRecord.ReviewDone > 0 && yesterdayRecord.ReviewTotal > 0 {
+				completionRate := float64(yesterdayRecord.ReviewDone) / float64(yesterdayRecord.ReviewTotal)
+				if completionRate < 0.6 {
+					newTotal = maxInt(5, newTotal/2)
+				}
+			}
+		}
+		record.NewTotal = newTotal
 		record.ReviewTotal = ub.DailyReviewWords
 	}
 
@@ -834,40 +889,51 @@ func updateWordBookDailyRecord(userWordBookID uint, isNew bool) {
 	record.StudiedAt = time.Now()
 
 	if record.ID == 0 {
-		database.DB.Create(&record)
+		if err := database.DB.Create(&record).Error; err != nil {
+			fmt.Printf("failed to create daily record: %v\n", err)
+			return
+		}
 	} else {
-		database.DB.Save(&record)
+		if err := database.DB.Save(&record).Error; err != nil {
+			fmt.Printf("failed to save daily record: %v\n", err)
+			return
+		}
 	}
 
 	// 更新 UserWordBook 的连续天数和学习天数
-	updateWordBookStreak(userWordBookID)
+	updateWordBookStreak(userWordBookID, todayWasCompleted)
 }
 
 // updateWordBookStreak 更新词书学习连续天数
-func updateWordBookStreak(userWordBookID uint) {
+func updateWordBookStreak(userWordBookID uint, todayWasCompleted bool) {
 	var ub models.UserWordBook
 	if err := database.DB.First(&ub, "id = ?", userWordBookID).Error; err != nil {
 		return
 	}
 
-	// 检查今天是否有记录
 	today := time.Now().Format("2006-01-02")
+	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
+
 	var todayRecord models.WordBookDailyRecord
 	todayExists := database.DB.Where("user_word_book_id = ? AND date = ?", userWordBookID, today).First(&todayRecord).Error == nil
 
-	// 检查昨天
-	yesterday := time.Now().AddDate(0, 0, -1).Format("2006-01-02")
 	var yesterdayRecord models.WordBookDailyRecord
 	yesterdayCompleted := database.DB.Where("user_word_book_id = ? AND date = ? AND is_completed = ?",
 		userWordBookID, yesterday, true).First(&yesterdayRecord).Error == nil
 
-	if todayExists && todayRecord.IsCompleted {
-		if yesterdayCompleted || ub.CurrentStreak == 0 {
-			if !yesterdayCompleted && ub.CurrentStreak == 0 {
-				ub.CurrentStreak = 1
-			}
+	todayCompleted := todayExists && todayRecord.IsCompleted
+
+	if todayCompleted {
+		if yesterdayCompleted {
+			ub.CurrentStreak++
+		} else {
+			ub.CurrentStreak = 1
 		}
-		ub.TotalStudiedDays++
+		if !todayWasCompleted {
+			ub.TotalStudiedDays++
+		}
+	} else {
+		ub.CurrentStreak = 0
 	}
 
 	ub.LastStudiedAt = ptrTime(time.Now())

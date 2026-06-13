@@ -20,12 +20,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
 )
 
 var ErrVideoLessonProcessing = errors.New("video lesson is already processing")
+var processingLessons sync.Map
 
 type VideoLearningService struct {
 	db                 *gorm.DB
@@ -226,6 +228,11 @@ func (s *VideoLearningService) ProcessLesson(ctx context.Context, lessonID uint)
 	if s == nil {
 		return
 	}
+	if _, loaded := processingLessons.LoadOrStore(lessonID, true); loaded {
+		return
+	}
+	defer processingLessons.Delete(lessonID)
+
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(s.cfg.ProcessingTimeoutSeconds)*time.Second)
 	defer cancel()
 
@@ -442,6 +449,9 @@ func (s *VideoLearningService) TranslateSubtitles(ctx context.Context, userID, l
 	result := &VideoSubtitleTranslateResult{}
 	batchSize := 20
 	for i := 0; i < len(subtitles); i += batchSize {
+		if err := ctx.Err(); err != nil {
+			break
+		}
 		end := i + batchSize
 		if end > len(subtitles) {
 			end = len(subtitles)
@@ -449,6 +459,9 @@ func (s *VideoLearningService) TranslateSubtitles(ctx context.Context, userID, l
 		batch := subtitles[i:end]
 
 		for j := range batch {
+			if err := ctx.Err(); err != nil {
+				break
+			}
 			if strings.TrimSpace(batch[j].Text) == "" {
 				result.Skipped++
 				continue
@@ -565,6 +578,7 @@ func (s *VideoLearningService) extractAudio(ctx context.Context, lesson models.V
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		_ = os.Remove(audioPath)
 		return "", fmt.Errorf("%w: %s", err, trimForLog(stderr.String(), 500))
 	}
 	return audioPath, nil

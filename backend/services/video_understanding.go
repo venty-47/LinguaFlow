@@ -113,7 +113,7 @@ func (s *VideoUnderstandingService) GenerateUnderstanding(
 		TokensUsed:    estimateTokens(prompt + response),
 	}
 
-	if err == nil {
+	if existing.ID > 0 {
 		understanding.ID = existing.ID
 		understanding.RefreshedAt = &now
 		if err := s.db.WithContext(ctx).Save(&understanding).Error; err != nil {
@@ -156,13 +156,14 @@ func (s *VideoUnderstandingService) ChatWithVideo(
 		return "", err
 	}
 
-	for _, msg := range messages {
+	if len(messages) > 0 {
+		lastUserMsg := messages[len(messages)-1]
 		s.db.WithContext(ctx).Create(&models.VideoConversation{
 			VideoLessonID: lesson.ID,
 			UserID:        userID,
-			Role:          msg.Role,
-			Content:       msg.Content,
-			TokensUsed:    estimateTokens(msg.Content),
+			Role:          lastUserMsg.Role,
+			Content:       lastUserMsg.Content,
+			TokensUsed:    estimateTokens(lastUserMsg.Content),
 		})
 	}
 
@@ -374,7 +375,8 @@ func (s *VideoUnderstandingService) callAI(ctx context.Context, prompt string) (
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.aiService.APIKey)
 
-	resp, err := http.DefaultClient.Do(req)
+	client := &http.Client{Timeout: 120 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}

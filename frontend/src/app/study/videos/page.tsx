@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Upload, Loader2, PlayCircle, RefreshCw, TriangleAlert, Clock3, FileVideo2, Trash2 } from 'lucide-react';
+import { Upload, Loader2, PlayCircle, RefreshCw, TriangleAlert, Clock3, FileVideo2, Trash2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { resolveAPIAssetURL, videoLessonAPI } from '@/lib/api';
 import { formatVideoTime } from '@/lib/videoSubtitles';
 import { useAuthStore } from '@/store/authStore';
@@ -33,15 +33,20 @@ export default function VideoLessonsPage() {
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [page, setPage] = useState(1);
+  const [totalPage, setTotalPage] = useState(1);
 
   useEffect(() => setMounted(true), []);
 
-  const loadLessons = async () => {
+  const loadLessons = async (targetPage?: number) => {
     try {
       setLoading(true);
       setError('');
-      const response = await videoLessonAPI.getLessons({ page: 1, page_size: 30 });
+      const p = targetPage ?? page;
+      const response = await videoLessonAPI.getLessons({ page: p, page_size: 12 });
       setLessons(response.data.data || []);
+      const pag = response.data.pagination;
+      if (pag) setTotalPage(pag.total_page || 1);
     } catch (err: any) {
       setError(err.response?.data?.error || '视频列表加载失败');
     } finally {
@@ -56,7 +61,7 @@ export default function VideoLessonsPage() {
       return;
     }
     loadLessons();
-  }, [isAuthenticated, mounted, router, token]);
+  }, [isAuthenticated, mounted, router, token, page]);
 
   useEffect(() => {
     if (!lessons.some((lesson) => activeStatuses.includes(lesson.status))) {
@@ -142,7 +147,7 @@ export default function VideoLessonsPage() {
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">上传英文视频，自动生成字幕后逐句学习。</p>
         </div>
         <button
-          onClick={loadLessons}
+          onClick={() => loadLessons()}
           className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-gray-300 px-3 text-sm font-medium text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-900"
         >
           <RefreshCw className="h-4 w-4" />
@@ -247,6 +252,30 @@ export default function VideoLessonsPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {totalPage > 1 && (
+        <div className="mt-6 flex items-center justify-center gap-2">
+          <button
+            onClick={() => { setPage((p) => Math.max(1, p - 1)); }}
+            disabled={page <= 1}
+            className="inline-flex h-9 items-center gap-1 rounded-md border border-gray-300 px-3 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            <ChevronLeft className="h-4 w-4" />
+            上一页
+          </button>
+          <span className="text-sm text-gray-500 dark:text-gray-400">
+            {page} / {totalPage}
+          </span>
+          <button
+            onClick={() => { setPage((p) => Math.min(totalPage, p + 1)); }}
+            disabled={page >= totalPage}
+            className="inline-flex h-9 items-center gap-1 rounded-md border border-gray-300 px-3 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800"
+          >
+            下一页
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
       )}
     </div>

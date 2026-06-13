@@ -892,6 +892,13 @@ export interface DailyTasks {
     daily_new_words: number;
     daily_review_words: number;
   };
+  progress?: {
+    new_learned: number;
+    new_total: number;
+    review_done: number;
+    review_total: number;
+    is_completed: boolean;
+  };
 }
 
 export interface WordBookStats {

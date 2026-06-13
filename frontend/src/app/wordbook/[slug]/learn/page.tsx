@@ -142,21 +142,27 @@ export default function WordBookLearnPage() {
         const data = res.data.data as DailyTasks;
         setTasks(data);
 
-        // 判断起始阶段
-        if (data.new_word_quota === 0) {
-          if (data.total_review === 0) {
-            setPhase('done');
-          } else {
-            setPhase('review');
-          }
-        } else if (data.total_new === 0) {
-          if (data.total_review === 0) {
-            setPhase('done');
-          } else {
-            setPhase('review');
-          }
-        } else {
+        // 从服务端进度恢复今日学习位置（避免刷新或退出再进后从 0 开始）
+        const p = data.progress;
+        const resumedNewIndex = p ? Math.min(p.new_learned, data.total_new) : 0;
+        const resumedReviewIndex = p ? Math.min(p.review_done, data.total_review) : 0;
+        const resumedNewDone = p ? p.new_learned : 0;
+        const resumedReviewDone = p ? p.review_done : 0;
+
+        setNewIndex(resumedNewIndex);
+        setReviewIndex(resumedReviewIndex);
+        setNewDone(resumedNewDone);
+        setReviewDone(resumedReviewDone);
+
+        // 判断起始阶段：优先用服务端的 is_completed，否则按剩余任务数推断
+        if (p?.is_completed) {
+          setPhase('done');
+        } else if (resumedNewIndex < data.total_new) {
           setPhase('new');
+        } else if (resumedReviewIndex < data.total_review) {
+          setPhase('review');
+        } else {
+          setPhase('done');
         }
       } catch (err: unknown) {
         setError('加载今日任务失败');

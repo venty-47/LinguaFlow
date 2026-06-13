@@ -882,13 +882,44 @@ func updateWordBookDailyRecord(userWordBookID uint, isNew bool) {
 
 	todayWasCompleted := record.IsCompleted
 
-	// 只在首次创建时初始化目标值，或者目标值为0时重新设置
-	// 注意：实际的目标值应该在 GetTodayTasks 时就设置好，这里只是兜底逻辑
+	// 兜底：记录首次创建时，按"实际可用任务数"设置目标值，避免 DailyProgress 显示成
+	// 配置配额（如 20/50）而与实际生成的任务数不一致。正常路径应该由 GetTodayTasks
+	// 里的 initializeDailyRecordTargets 预先设置好。
 	if record.ID == 0 && record.NewTotal == 0 && record.ReviewTotal == 0 {
 		var ub models.UserWordBook
 		if err := database.DB.First(&ub, "id = ?", userWordBookID).Error; err == nil {
-			record.NewTotal = ub.DailyNewWords
-			record.ReviewTotal = ub.DailyReviewWords
+			var learnedToday int64
+			database.DB.Model(&models.UserWordBookProgress{}).
+				Where("user_word_book_id = ? AND DATE(first_seen_at) = ?", userWordBookID, today).
+				Count(&learnedToday)
+
+			var remainingNew int64
+			learnedEntryIDs := database.DB.Model(&models.UserWordBookProgress{}).
+				Where("user_word_book_id = ?", userWordBookID).
+				Select("word_book_entry_id")
+			database.DB.Model(&models.WordBookEntry{}).
+				Where("word_book_id = ? AND id NOT IN (?)", ub.WordBookID, learnedEntryIDs).
+				Count(&remainingNew)
+
+			newTotal := int(learnedToday) + int(remainingNew)
+			if newTotal <= 0 {
+				newTotal = int(learnedToday)
+			}
+			if newTotal <= 0 {
+				newTotal = ub.DailyNewWords
+			}
+			record.NewTotal = newTotal
+
+			var dueReviews int64
+			database.DB.Model(&models.UserWordBookProgress{}).
+				Where("user_word_book_id = ? AND status IN ? AND next_review_at <= ?",
+					userWordBookID, []string{"learning", "mastered"}, time.Now()).
+				Count(&dueReviews)
+			reviewTotal := int(dueReviews)
+			if reviewTotal <= 0 {
+				reviewTotal = ub.DailyReviewWords
+			}
+			record.ReviewTotal = reviewTotal
 		}
 	}
 

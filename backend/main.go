@@ -230,6 +230,9 @@ func main() {
 				protected.PATCH("/vocabulary/:id/notes", handlers.UpdateVocabularyNotes)
 			protected.POST("/vocabulary/:id/review", handlers.ReviewVocabulary)
 			protected.POST("/vocabulary/:id/review-answer", handlers.SubmitVocabularyReviewAnswer)
+			protected.GET("/vocabulary/:id/mnemonic", handlers.GetVocabMnemonic)
+			protected.GET("/vocabulary/:id/ai-examples", handlers.GetVocabAIExamples)
+			protected.POST("/vocabulary/:id/chat", handlers.ChatWithVocab)
 
 			// 词书背词
 			wordbooks := protected.Group("/wordbooks")

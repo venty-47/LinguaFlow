@@ -353,6 +353,8 @@ type Vocabulary struct {
 	ArticleID      *uint      `gorm:"index" json:"article_id"`                // 从哪篇文章添加的
 	Context        string     `gorm:"type:text" json:"context"`               // 上下文语境
 	Notes          string     `gorm:"type:text" json:"notes"`                 // 用户笔记
+	Mnemonic       string     `gorm:"type:text" json:"mnemonic"`              // AI 助记
+	AIExamples     string     `gorm:"type:text" json:"ai_examples"`           // AI 例句 (JSON)
 	IsLearned      bool       `gorm:"default:false" json:"is_learned"`        // 是否已掌握
 	ReviewCount    int        `gorm:"default:0" json:"review_count"`          // 复习次数
 	ForgottenCount int        `gorm:"default:0;index" json:"forgotten_count"` // 遗忘次数

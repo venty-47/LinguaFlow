@@ -6,10 +6,12 @@ import Link from 'next/link';
 import ReactMarkdown from 'react-markdown';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { format } from 'date-fns';
+import * as Tabs from '@radix-ui/react-tabs';
 import {
   Bot,
   BookmarkCheck,
   BookmarkPlus,
+  BookOpen,
   ChevronLeft,
   CheckCircle2,
   FileText,
@@ -521,6 +523,7 @@ export default function ArticlePage() {
   const [tooltipContext, setTooltipContext] = useState('');
   const [showChinese, setShowChinese] = useState(false);
   const [intensiveMode, setIntensiveMode] = useState(false);
+  const [readingMode, setReadingMode] = useState<'browsing' | 'intensive' | 'exam' | 'echo'>('browsing');
   const [readProgress, setReadProgress] = useState(0);
   const [progressCheckpoint, setProgressCheckpoint] = useState(0);
   const [isFavorited, setIsFavorited] = useState(false);
@@ -1813,6 +1816,39 @@ export default function ArticlePage() {
       <div className={`mx-auto max-w-6xl px-4 py-9 transition-[padding] sm:px-6 lg:px-8 ${
         assistantOpen ? 'xl:mr-[440px]' : ''
       }`}>
+        <Tabs.Root value={readingMode} onValueChange={(v) => setReadingMode(v as typeof readingMode)}>
+          <Tabs.List className="mb-6 flex flex-wrap gap-1 border-b border-gray-700 pb-px">
+            <Tabs.Trigger
+              value="browsing"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-400 transition-colors hover:text-gray-200 data-[state=active]:border-b-2 data-[state=active]:border-sky-500 data-[state=active]:text-sky-400"
+            >
+              <BookOpen className="h-4 w-4" />
+              泛读
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="intensive"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-400 transition-colors hover:text-gray-200 data-[state=active]:border-b-2 data-[state=active]:border-sky-500 data-[state=active]:text-sky-400"
+            >
+              <FileText className="h-4 w-4" />
+              精读
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="exam"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-400 transition-colors hover:text-gray-200 data-[state=active]:border-b-2 data-[state=active]:border-sky-500 data-[state=active]:text-sky-400"
+            >
+              <Timer className="h-4 w-4" />
+              考试
+            </Tabs.Trigger>
+            <Tabs.Trigger
+              value="echo"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-400 transition-colors hover:text-gray-200 data-[state=active]:border-b-2 data-[state=active]:border-sky-500 data-[state=active]:text-sky-400"
+            >
+              <Volume2 className="h-4 w-4" />
+              跟读
+            </Tabs.Trigger>
+          </Tabs.List>
+        </Tabs.Root>
+
         <Link
           href="/"
           className="mb-8 inline-flex items-center gap-2 text-sm font-semibold text-gray-500 hover:text-gray-300"
@@ -2793,10 +2829,21 @@ export default function ArticlePage() {
                   )}
                 </button>
               </div>
-            </form>
+</form>
           </aside>
-      )}
-      {shareToast && <Toast message={shareToast} onClose={() => setShareToast('')} />}
-    </>
-  );
-}
+        )}
+
+        {readingMode !== 'browsing' && (
+          <div className="mb-4 rounded-lg border border-yellow-700/50 bg-yellow-900/20 p-4">
+            <p className="text-sm text-yellow-200">
+              {readingMode === 'intensive' && '精读模式：点击句子查看详细解析'}
+              {readingMode === 'exam' && '考试模式：计时阅读，完成后作答'}
+              {readingMode === 'echo' && '跟读模式：播放音频，录音跟读'}
+            </p>
+          </div>
+        )}
+
+        {shareToast && <Toast message={shareToast} onClose={() => setShareToast('')} />}
+      </>
+    );
+  }

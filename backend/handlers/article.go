@@ -1139,7 +1139,11 @@ func buildArticleQuizResponse(quiz models.ArticleQuiz, attempt *models.ArticleQu
 // GenerateArticleQuiz 生成指定题型的文章测验
 func GenerateArticleQuiz(c *gin.Context) {
 	userID, _ := c.Get("user_id")
-	articleID, _ := strconv.Atoi(c.Param("id"))
+	articleID, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid article ID"})
+		return
+	}
 
 	var req articleQuizRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -1211,7 +1215,11 @@ func generateQuizWithTypes(articleID uint, questionTypes []string, countPerType 
 		return quiz, err
 	}
 
-	database.DB.Where("quiz_id = ?", quiz.ID).Delete(&models.ArticleQuizQuestion{})
+	var attemptCount int64
+	database.DB.Model(&models.ArticleQuizAttempt{}).Where("quiz_id = ?", quiz.ID).Count(&attemptCount)
+	if attemptCount == 0 {
+		database.DB.Where("quiz_id = ?", quiz.ID).Delete(&models.ArticleQuizQuestion{})
+	}
 
 	questions := buildMultiTypeQuizQuestions(article, quiz.ID, questionTypes, countPerType)
 	if len(questions) > 0 {
@@ -1280,7 +1288,6 @@ func generateSingleChoiceQuestions(article models.Article, quizID uint, startOrd
 	}
 
 	detailParagraph := paragraphs[minArticleInt(1, len(paragraphs)-1)]
-	_ = detailParagraph
 	questions := []models.ArticleQuizQuestion{}
 
 	if count >= 1 {
@@ -1339,28 +1346,44 @@ func generateTrueFalseQuestions(article models.Article, quizID uint, startOrder 
 	questions := []models.ArticleQuizQuestion{}
 
 	if count >= 1 {
+		correctIsTrue := rand.Intn(2) == 0
+		prompt1 := fmt.Sprintf("The article is primarily about %s.", categoryName)
+		if !correctIsTrue {
+			prompt1 = fmt.Sprintf("The article has nothing to do with %s.", categoryName)
+		}
 		questions = append(questions, newQuizQuestionWithType(quizID, startOrder, "true_false",
-			fmt.Sprintf("The article is primarily about %s.", categoryName),
+			prompt1,
 			[]string{"True", "False"},
-			0,
-			"根据文章标题和摘要，主要内容与分类相关。"))
+			map[bool]int{true: 0, false: 1}[correctIsTrue],
+			"根据文章标题和摘要，判断陈述是否与文章内容一致。"))
 	}
 
 	if count >= 2 && len(paragraphs) > 1 {
 		firstPara := firstSentence(paragraphs[0])
+		correctIsTrue2 := rand.Intn(2) == 0
+		prompt2 := fmt.Sprintf("The article begins with: \"%s\" This statement is accurate based on the article.",
+			truncateRunes(firstPara, 100))
+		if !correctIsTrue2 {
+			prompt2 = fmt.Sprintf("The article begins by discussing something completely unrelated to: \"%s\"",
+				truncateRunes(firstPara, 100))
+		}
 		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "true_false",
-			fmt.Sprintf("The article begins with: \"%s\" This statement is accurate based on the article.",
-				truncateRunes(firstPara, 100)),
+			prompt2,
 			[]string{"True", "False"},
-			0,
+			map[bool]int{true: 0, false: 1}[correctIsTrue2],
 			"文章开头通常是概括性陈述，与后文内容一致。"))
 	}
 
 	if count >= 3 {
+		correctIsTrue3 := rand.Intn(2) == 0
+		prompt3 := "The article presents multiple perspectives and acknowledges remaining challenges."
+		if !correctIsTrue3 {
+			prompt3 = "The article only presents a single viewpoint and claims everything is already resolved."
+		}
 		questions = append(questions, newQuizQuestionWithType(quizID, startOrder+len(questions), "true_false",
-			"The article presents multiple perspectives and acknowledges remaining challenges.",
+			prompt3,
 			[]string{"True", "False"},
-			1,
+			map[bool]int{true: 0, false: 1}[correctIsTrue3],
 			"多数新闻文章会呈现问题的复杂性，承认挑战和未解决的问题。"))
 	}
 
@@ -1468,19 +1491,7 @@ func newQuizQuestionWithType(quizID uint, sortOrder int, questionType, prompt st
 }
 }
 
-func newQuizQuestion(quizID uint, sortOrder int, prompt string, options []string, correctIndex int, explanation string) models.ArticleQuizQuestion {
-	options, correctIndex = shuffleQuizOptions(options, correctIndex, int64(quizID)*100+int64(sortOrder))
-	optionsJSON, _ := json.Marshal(options)
-	return models.ArticleQuizQuestion{
-		QuizID:       quizID,
-		SortOrder:    sortOrder,
-		QuestionType: "single_choice",
-		Prompt:       prompt,
-		Options:      string(optionsJSON),
-		CorrectIndex: correctIndex,
-		Explanation:  explanation,
-	}
-}
+
 
 func shuffleQuizOptions(options []string, correctIndex int, seed int64) ([]string, int) {
 	if correctIndex < 0 || correctIndex >= len(options) {

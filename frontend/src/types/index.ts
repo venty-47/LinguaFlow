@@ -954,3 +954,14 @@ export interface DailySentence {
   date: string;
   cached: boolean;
 }
+
+export interface UserProfile {
+  target_exam: string;
+  target_level: string;
+  current_level: string;
+}
+
+export interface StudyPlanData {
+  content: string;
+  cached: boolean;
+}

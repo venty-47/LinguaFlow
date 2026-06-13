@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { AdminArticleInput } from '@/types';
+import { AdminArticleInput, UserProfile } from '@/types';
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api';
 export const API_ORIGIN = API_URL.replace(/\/api\/?$/, '');
@@ -369,6 +369,8 @@ export const studyAPI = {
     daily_review_words: number;
     daily_articles: number;
   }) => api.put('/study/goal', data),
+  getPlan: () => api.get('/study/plan'),
+  regeneratePlan: () => api.post('/study/plan'),
 };
 
 // 词书背词 API
@@ -407,6 +409,11 @@ export const wordBookAPI = {
 
 export const dailySentenceAPI = {
   getToday: () => api.get('/daily-sentence'),
+};
+
+export const profileAPI = {
+  get: () => api.get('/profile'),
+  update: (data: Partial<UserProfile>) => api.put('/profile', data),
 };
 
 export default api;

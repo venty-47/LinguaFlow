@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"gugudu-backend/database"
 	"gugudu-backend/models"
@@ -902,7 +903,70 @@ func GetStudyPlan(c *gin.Context) {
 		return
 	}
 
-	RegenerateStudyPlan(c)
+	content, err := generateStudyPlanSync(userID.(uint))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("生成学习计划失败: %v", err)})
+		return
+	}
+
+	redisTTL := getTTLToMidnight()
+	database.RDB.Set(ctx, cacheKey, content, redisTTL)
+
+	var plan models.StudyPlan
+	err = database.DB.Where("user_id = ? AND plan_date = ?", userID.(uint), today).First(&plan).Error
+	if err == gorm.ErrRecordNotFound {
+		plan = models.StudyPlan{
+			UserID:   userID.(uint),
+			PlanDate: today,
+			Content:  content,
+		}
+		database.DB.Create(&plan)
+	} else if err == nil {
+		plan.Content = content
+		database.DB.Save(&plan)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"content": content,
+		"cached":  false,
+	})
+}
+
+func generateStudyPlanSync(userID uint) (string, error) {
+	studyData, err := CollectStudyData(userID)
+	if err != nil {
+		return "", fmt.Errorf("failed to collect study data: %w", err)
+	}
+
+	if aiAnalysisService == nil || !aiAnalysisService.IsConfigured() {
+		return "", fmt.Errorf("AI 服务未配置")
+	}
+
+	aiInput := services.StudyPlanDataInput{
+		UserID:             studyData.UserID,
+		ReviewDueWords:     studyData.ReviewDueWords,
+		ForgottenWords:     studyData.ForgottenWords,
+		RecentReadingCount: studyData.RecentReadingCount,
+		WordBookBacklog:    studyData.WordBookBacklog,
+		IncompleteVideos:   studyData.IncompleteVideos,
+		TargetExam:         studyData.TargetExam,
+		CurrentLevel:       studyData.CurrentLevel,
+		TargetLevel:        studyData.TargetLevel,
+		DailyReadMinutes:   studyData.DailyReadMinutes,
+		DailyReviewWords:   studyData.DailyReviewWords,
+		DailyArticles:      studyData.DailyArticles,
+	}
+
+	var content strings.Builder
+	err = aiAnalysisService.GenerateStudyPlanStream(aiInput, func(delta string) error {
+		content.WriteString(delta)
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return content.String(), nil
 }
 
 func RegenerateStudyPlan(c *gin.Context) {
@@ -923,10 +987,17 @@ func RegenerateStudyPlan(c *gin.Context) {
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
+	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
+	c.Status(http.StatusOK)
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "当前服务器不支持流式输出"})
+		return
+	}
 
 	var fullContent strings.Builder
 
@@ -947,15 +1018,22 @@ func RegenerateStudyPlan(c *gin.Context) {
 
 	err = aiAnalysisService.GenerateStudyPlanStream(aiInput, func(delta string) error {
 		fullContent.WriteString(delta)
-		c.Writer.Write([]byte("data: "))
-		c.Writer.Write([]byte(delta))
-		c.Writer.Write([]byte("\n\n"))
-		c.Writer.Flush()
+		payload, jsonErr := json.Marshal(gin.H{"delta": delta})
+		if jsonErr != nil {
+			return jsonErr
+		}
+		if _, jsonErr := fmt.Fprintf(c.Writer, "data: %s\n\n", payload); jsonErr != nil {
+			return jsonErr
+		}
+		flusher.Flush()
 		return nil
 	})
 
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("生成学习计划失败: %v", err)})
+		fmt.Printf("AI 学习计划生成失败: %v\n", err)
+		payload, _ := json.Marshal(gin.H{"error": "AI 学习计划暂时不可用"})
+		fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", payload)
+		flusher.Flush()
 		return
 	}
 
@@ -978,8 +1056,8 @@ func RegenerateStudyPlan(c *gin.Context) {
 		database.DB.Save(&studyPlan)
 	}
 
-	c.Writer.Write([]byte("data: [DONE]\n\n"))
-	c.Writer.Flush()
+	fmt.Fprint(c.Writer, "data: [DONE]\n\n")
+	flusher.Flush()
 }
 
 func getTTLToMidnight() time.Duration {

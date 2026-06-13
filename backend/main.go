@@ -214,6 +214,12 @@ func main() {
 			protected.GET("/study/today", handlers.GetStudyToday)
 			protected.GET("/study/diagnostics", handlers.GetStudyDiagnostics)
 			protected.PUT("/study/goal", handlers.UpdateStudyGoal)
+			protected.GET("/study/plan", handlers.GetStudyPlan)
+			protected.POST("/study/plan", handlers.RegenerateStudyPlan)
+
+			// 用户学习档案
+			protected.GET("/profile", handlers.GetUserProfile)
+			protected.PUT("/profile", handlers.UpdateUserProfile)
 
 			// 学习知识图谱
 			protected.GET("/knowledge-graph/overview", handlers.GetKnowledgeGraphOverview)

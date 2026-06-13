@@ -602,3 +602,160 @@ func cleanJSONContent(content string) string {
 	content = strings.TrimSuffix(content, "```")
 	return strings.TrimSpace(content)
 }
+
+type StudyPlanDataInput struct {
+	UserID             uint   `json:"user_id"`
+	ReviewDueWords     int    `json:"review_due_words"`
+	ForgottenWords     int    `json:"forgotten_words"`
+	RecentReadingCount int    `json:"recent_reading_count"`
+	WordBookBacklog    int    `json:"wordbook_backlog"`
+	IncompleteVideos   int    `json:"incomplete_videos"`
+	TargetExam         string `json:"target_exam"`
+	CurrentLevel       string `json:"current_level"`
+	TargetLevel        string `json:"target_level"`
+	DailyReadMinutes   int    `json:"daily_read_minutes"`
+	DailyReviewWords   int    `json:"daily_review_words"`
+	DailyArticles      int    `json:"daily_articles"`
+}
+
+func (s *AIAnalysisService) GenerateStudyPlanStream(input StudyPlanDataInput, onDelta func(string) error) error {
+	if !s.IsConfigured() {
+		return fmt.Errorf("AI 学习计划服务未配置")
+	}
+	if onDelta == nil {
+		return fmt.Errorf("AI 学习计划流式回调未配置")
+	}
+
+	prompt := buildStudyPlanPrompt(input)
+
+	payload := chatCompletionRequest{
+		Model: s.Model,
+		Messages: []chatMessage{
+			{
+				Role: "system",
+				Content: strings.TrimSpace(`你是一个面向中文英语学习者的 AI 学习规划助手。
+请根据用户的学习数据，生成今日学习计划。
+要求：
+1. 使用中文回复
+2. 内容要具体、可执行
+3. 计划要平衡听说读写
+4. 考虑用户的考试目标和当前水平
+5. 输出格式为友好的学习计划文本
+6. 每天的计划应包括：单词复习、新文章阅读、视频学习、练习建议等`),
+			},
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+		Temperature: temperatureForModel(s.Model, 0.4),
+		MaxTokens:   1500,
+		Stream:      true,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("构建 AI 学习计划请求失败: %w", err)
+	}
+
+	endpoint := s.BaseURL + "/chat/completions"
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("构建 AI 学习计划请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+s.APIKey)
+
+	streamClient := *s.client
+	streamClient.Timeout = 0
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("AI 学习计划请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("AI 学习计划 HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	received := false
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" {
+			continue
+		}
+		if data == "[DONE]" {
+			break
+		}
+
+		var chunk chatCompletionStreamResponse
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			return fmt.Errorf("解析 AI 学习计划流式响应失败: %w", err)
+		}
+		if chunk.Error != nil {
+			return fmt.Errorf("AI 学习计划错误: %s", chunk.Error.Message)
+		}
+
+		for _, choice := range chunk.Choices {
+			delta := firstNonEmptyAIContent(choice.Delta.Content, choice.Message.Content)
+			if delta == "" {
+				continue
+			}
+			received = true
+			if err := onDelta(delta); err != nil {
+				return err
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("读取 AI 学习计划流式响应失败: %w", err)
+	}
+	if !received {
+		return fmt.Errorf("AI 学习计划结果为空")
+	}
+
+	return nil
+}
+
+func buildStudyPlanPrompt(input StudyPlanDataInput) string {
+	var sb strings.Builder
+	sb.WriteString("请根据以下用户学习数据，生成今日学习计划：\n\n")
+
+	sb.WriteString("【学习数据统计】\n")
+	sb.WriteString(fmt.Sprintf("- 待复习单词数：%d\n", input.ReviewDueWords))
+	sb.WriteString(fmt.Sprintf("- 高遗忘词数（遗忘3次以上）：%d\n", input.ForgottenWords))
+	sb.WriteString(fmt.Sprintf("- 最近7天阅读文章数：%d\n", input.RecentReadingCount))
+	sb.WriteString(fmt.Sprintf("- 词书积压词数：%d\n", input.WordBookBacklog))
+	sb.WriteString(fmt.Sprintf("- 未完成视频课程数：%d\n", input.IncompleteVideos))
+
+	sb.WriteString("\n【学习目标设置】\n")
+	if input.TargetExam != "" {
+		sb.WriteString(fmt.Sprintf("- 目标考试：%s\n", input.TargetExam))
+	}
+	if input.CurrentLevel != "" {
+		sb.WriteString(fmt.Sprintf("- 当前水平：%s\n", input.CurrentLevel))
+	}
+	if input.TargetLevel != "" {
+		sb.WriteString(fmt.Sprintf("- 目标水平：%s\n", input.TargetLevel))
+	}
+
+	sb.WriteString("\n【每日目标】\n")
+	sb.WriteString(fmt.Sprintf("- 每日阅读时长：%d 分钟\n", input.DailyReadMinutes))
+	sb.WriteString(fmt.Sprintf("- 每日复习单词数：%d 个\n", input.DailyReviewWords))
+	sb.WriteString(fmt.Sprintf("- 每日阅读文章数：%d 篇\n", input.DailyArticles))
+
+	sb.WriteString("\n请生成今日具体可执行的学习计划。")
+	return sb.String()
+}

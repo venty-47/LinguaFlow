@@ -455,8 +455,8 @@ export const dailySentenceAPI = {
 };
 
 export const profileAPI = {
-  get: () => api.get('/profile'),
-  update: (data: Partial<UserProfile>) => api.put('/profile', data),
+  get: () => api.get('/profile/study'),
+  update: (data: Partial<UserProfile>) => api.put('/profile/study', data),
 };
 
 export default api;

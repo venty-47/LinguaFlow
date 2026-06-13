@@ -217,9 +217,9 @@ func main() {
 			protected.GET("/study/plan", handlers.GetStudyPlan)
 			protected.POST("/study/plan", handlers.RegenerateStudyPlan)
 
-			// 用户学习档案
-			protected.GET("/profile", handlers.GetUserProfile)
-			protected.PUT("/profile", handlers.UpdateUserProfile)
+			// 用户学习档案（考试目标、CEFR 等级）
+			protected.GET("/profile/study", handlers.GetUserProfile)
+			protected.PUT("/profile/study", handlers.UpdateUserProfile)
 
 			// 学习知识图谱
 			protected.GET("/knowledge-graph/overview", handlers.GetKnowledgeGraphOverview)

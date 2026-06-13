@@ -2105,3 +2105,162 @@ func hashString(s string) string {
 	h.Write([]byte(s))
 	return fmt.Sprintf("%x", h.Sum(nil))
 }
+
+type DifficultyRecommendation struct {
+	UserCEFR             string           `json:"user_cefr"`
+	Confidence           float64          `json:"confidence"`
+	Stats                UserReadingStats `json:"stats"`
+	RecommendedArticles  []models.Article `json:"articles"`
+}
+
+type UserReadingStats struct {
+	AvgNewWordRate   float64 `json:"avg_new_word_rate"`
+	AvgReadingSpeed  float64 `json:"avg_reading_speed"`
+	CompletionRate   float64 `json:"completion_rate"`
+	ArticlesRead     int     `json:"articles_read"`
+}
+
+func GetDifficultyRecommendation(c *gin.Context) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	uid := userID.(uint)
+
+	var readHistories []models.ReadHistory
+	if err := database.DB.Where("user_id = ?", uid).Find(&readHistories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch read history"})
+		return
+	}
+
+	articlesRead := len(readHistories)
+	if articlesRead == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"data": DifficultyRecommendation{
+				UserCEFR:    "A1-A2",
+				Confidence: 0.5,
+				Stats: UserReadingStats{
+					AvgNewWordRate:   0,
+					AvgReadingSpeed:  0,
+					CompletionRate:   0,
+					ArticlesRead:     0,
+				},
+				RecommendedArticles: []models.Article{},
+			},
+		})
+		return
+	}
+
+	var totalNewWordRate float64
+	var totalReadingSpeed float64
+	var completedCount int
+
+	articleWordCounts := make(map[uint]int)
+	var articleIDs []uint
+	for _, h := range readHistories {
+		articleIDs = append(articleIDs, h.ArticleID)
+	}
+	if len(articleIDs) > 0 {
+		var articles []models.Article
+		database.DB.Where("id IN ?", articleIDs).Find(&articles)
+		for _, a := range articles {
+			articleWordCounts[a.ID] = a.WordCount
+		}
+	}
+
+	for _, h := range readHistories {
+		wordCount := articleWordCounts[h.ArticleID]
+		if wordCount == 0 {
+			wordCount = 300
+		}
+
+		var vocabCount int64
+		database.DB.Model(&models.Vocabulary{}).
+			Where("user_id = ? AND article_id = ?", uid, h.ArticleID).
+			Count(&vocabCount)
+
+		newWordRate := float64(vocabCount) / float64(wordCount)
+		if newWordRate > 1 {
+			newWordRate = 1
+		}
+		totalNewWordRate += newWordRate
+
+		if h.ReadTime > 0 {
+			readingSpeed := float64(wordCount) / (float64(h.ReadTime) / 60.0)
+			totalReadingSpeed += readingSpeed
+		}
+
+		if h.IsCompleted {
+			completedCount++
+		}
+	}
+
+	avgNewWordRate := totalNewWordRate / float64(articlesRead)
+	avgReadingSpeed := totalReadingSpeed / float64(articlesRead)
+	completionRate := float64(completedCount) / float64(articlesRead)
+
+	userCEFR := calculateCEFR(avgNewWordRate)
+	confidence := calculateConfidence(articlesRead, completionRate)
+
+	var recommendedArticles []models.Article
+	query := database.DB.Preload("Category").
+		Where("status = ?", "published")
+
+	if userCEFR == "A1-A2" {
+		query = query.Where("difficulty_level IN ?", []string{"A1", "A2"})
+	} else if userCEFR == "B1" {
+		query = query.Where("difficulty_level = ?", "B1")
+	} else if userCEFR == "B2" {
+		query = query.Where("difficulty_level = ?", "B2")
+	} else {
+		query = query.Where("difficulty_level IN ?", []string{"C1", "C2"})
+	}
+
+	query.Order("published_at DESC").Limit(10).Find(&recommendedArticles)
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": DifficultyRecommendation{
+			UserCEFR:    userCEFR,
+			Confidence: confidence,
+			Stats: UserReadingStats{
+				AvgNewWordRate:   avgNewWordRate,
+				AvgReadingSpeed:  avgReadingSpeed,
+				CompletionRate:   completionRate,
+				ArticlesRead:     articlesRead,
+			},
+			RecommendedArticles: recommendedArticles,
+		},
+	})
+}
+
+func calculateCEFR(newWordRate float64) string {
+	if newWordRate < 0.05 {
+		return "A1-A2"
+	} else if newWordRate < 0.15 {
+		return "B1"
+	} else if newWordRate < 0.25 {
+		return "B2"
+	} else {
+		return "C1-C2"
+	}
+}
+
+func calculateConfidence(articlesRead int, completionRate float64) float64 {
+	baseConfidence := 0.5
+
+	articleFactor := float64(minInt(articlesRead, 20)) / 20.0 * 0.3
+
+	completionFactor := completionRate * 0.2
+
+	confidence := baseConfidence + articleFactor + completionFactor
+	if confidence > 0.95 {
+		confidence = 0.95
+	}
+	if confidence < 0.3 {
+		confidence = 0.3
+	}
+
+	return math.Round(confidence*100) / 100
+}

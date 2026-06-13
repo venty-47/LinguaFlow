@@ -180,6 +180,7 @@ func main() {
 
 			// 阅读历史
 			protected.GET("/history", handlers.GetReadHistory)
+			protected.GET("/articles/recommend", handlers.GetDifficultyRecommendation)
 			protected.POST("/articles/:id/progress", handlers.UpdateReadProgress)
 			protected.POST("/articles/:id/assistant", middleware.PremiumRequired(database.DB), handlers.DiscussArticleWithAssistant)
 			protected.GET("/article-quizzes/:id", handlers.GetArticleQuiz)
